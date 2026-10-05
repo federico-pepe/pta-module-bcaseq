@@ -247,7 +247,12 @@ def handle_encoder(state, data):
     if e.scale_menu:
         e.nudge_scale_menu(idx, delta)
         return
-    e.nudge(idx, delta)
+    if layouts.editing(e):
+        e.nudge(idx, delta)
+        return
+    ti = layouts.slen_track(e, idx)
+    if ti is not None:
+        e.nudge_track_length(ti, delta, idx)
 
 
 _TOUCH_RE = re.compile(r"^Encoder (\d) touch$")
@@ -261,10 +266,16 @@ def handle_touch(state, data):
     if not m:
         return
     idx = int(m.group(1)) - 1
-    if e.edit_step() is not None:
+    if layouts.editing(e):
         e.touch_param(idx)
         if e.delete:
             e.reset_param(idx)
+        return
+    ti = layouts.slen_track(e, idx)
+    if ti is not None:
+        e.touch_param(idx)
+        if e.delete:
+            e.reset_track_length(ti, idx)
 
 
 def handle_external_midi(state, data):
