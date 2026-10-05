@@ -5,7 +5,6 @@ import os
 import time
 
 import colortable
-import colorlab
 import engine as eng
 import layouts
 
@@ -24,7 +23,7 @@ def color_by_index(idx):
 
 
 def track_color(idx):
-    """Screen color for a track color index, tuned in the Color Lab."""
+    """Screen color for a track color index, overridable in colors.json."""
     rgb = colortable.screen_rgb(idx)
     if rgb is None:
         return color_by_index(idx)
@@ -108,8 +107,6 @@ def button_colors(state):
 
 
 def pad_colors(state):
-    if state.lab is not None:
-        return state.lab.pad_colors()
     if state.browser_active:
         return [[0] * 8 for _ in range(8)]
     return layouts.pad_colors(state.engine)
@@ -160,9 +157,7 @@ def draw(state):
     black, white = color("off"), color("white")
     ops = [_rect(0, 0, W, H, black)]
 
-    if state.lab is not None:
-        ops += _lab_ops(state.lab, white)
-    elif state.browser_active:
+    if state.browser_active:
         ops += _browser_ops(state, black, white)
     elif e.scale_menu:
         ops += _scale_ops(e, white)
@@ -172,28 +167,6 @@ def draw(state):
     if state.popup_title is not None and time.monotonic() < state.popup_until:
         ops += _popup_ops(state.popup_title, state.popup_body, black, white)
     return {"ops": ops, "failed": 0}
-
-
-def _lab_ops(lab, white):
-    """Color Lab screen: three swatches to compare with the pads."""
-    full = lab.color
-    pal = PALETTE["byIndex"]
-    dim_i = lab.dim_index()
-    rgb = lab.rgb(PALETTE)
-    gray = color("gray_mid")
-    sw = lambda x, c: _rect(x, 36, 150, 56, c)
-    pc = lambda i: color_by_index(i)
-    ops = [
-        _text(8, 14, "COLOR LAB  %d/%d" % (lab.pos + 1, len(eng.TRACK_COLORS)), white),
-        _text(250, 14, "Enc1 color  Enc2 dim pad  Enc3-5 screen R G B  Enc6 reset", gray),
-        _text(8, 152, "Save = write colors.json    Shift+Layout or Select = exit", gray),
-        sw(8, pc(full)), sw(176, {"R": rgb[0], "G": rgb[1], "B": rgb[2], "A": 255}), sw(344, pc(dim_i)),
-        _text(8, 108, "PALETTE %d %s" % (full, pal[full]["name"]), gray),
-        _text(176, 108, "SCREEN %d %d %d" % rgb, white),
-        _text(344, 108, "DIM PAD %d %s" % (dim_i, pal[dim_i]["name"]), gray),
-        _text(8, 130, "Match the middle swatch to how the pads look.", gray),
-    ]
-    return ops
 
 
 def _scale_ops(e, white):

@@ -25,9 +25,7 @@ on the same row. Octave Up/Down moves the range and shows it on screen.
 ### Main screen
 BPM and scale are at the top. Each track shows the last note played and a bar for its position in the loop. Track names and rates are at the bottom, above the Screen-bottom buttons. The selected track is a filled block.
 
-### Color Lab
-Hold Shift and press Layout. The pads show a track color next to its dim shade. The screen shows
-three swatches: the palette color, the screen color, and the dim color. Encoder 1 picks the track
-color. Encoder 2 picks the dim pad shade. Encoders 3-5 set the screen R, G and B so the middle
-swatch matches the pads. Encoder 6 resets the screen color. Save writes `colors.json` next to
-`run.py`. Copy that file into the repo to keep it. Shift + Layout or Select (main) exits.
+### Colors
+Track colors use the hardware palette for the pads and measured screen colors for the screen
+(`colortable.py`). To tune them on a Push, use the `colorlab-py` example module in
+`push-tethered-app`. Copy its `colors.json` next to `run.py`. This module reads it at start up.
