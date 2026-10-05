@@ -31,6 +31,11 @@ def track_color(idx):
 
 
 BTN_OFF, BTN_DIM, BTN_FULL, BTN_GREEN = 0, 118, 122, 126
+# White-LED buttons read the CC value as brightness (0-127), not a palette index,
+# so 118 and 122 look the same on them. These need a much lower dim value.
+BTN_WHITE_DIM = 20
+WHITE_LED_BUTTONS = ("Repeat", "Accent", "Shift", "Delete")
+BTN_LIGHT_BLUE = 16   # sky: the Scene button of the chosen repeat count
 PULSE_HZ = 1.0
 
 BUTTON_CC = {
@@ -61,10 +66,10 @@ def button_colors(state):
     out["Play"] = BTN_GREEN if e.playing else BTN_FULL
     out["Layout"] = BTN_FULL if held.get("Layout") else BTN_DIM
     out["Scale"] = BTN_FULL if e.scale_menu else BTN_DIM
-    out["Repeat"] = BTN_FULL if (e.repeat_on or e.repeat_held) else BTN_DIM
-    out["Accent"] = BTN_FULL if (e.accent_on or e.accent_held) else BTN_DIM
-    out["Shift"] = BTN_FULL if e.shift else BTN_DIM
-    out["Delete"] = BTN_FULL if e.delete else BTN_DIM
+    out["Repeat"] = BTN_FULL if (e.repeat_on or e.repeat_held) else BTN_WHITE_DIM
+    out["Accent"] = BTN_FULL if (e.accent_on or e.accent_held) else BTN_WHITE_DIM
+    out["Shift"] = BTN_FULL if e.shift else BTN_WHITE_DIM
+    out["Delete"] = BTN_FULL if e.delete else BTN_WHITE_DIM
     out["Add"] = BTN_FULL if held.get("Add") else (BTN_DIM if len(e.tracks) < eng.MAX_TRACKS else BTN_OFF)
     out["Save"] = BTN_FULL if held.get("Save") else BTN_DIM
     out["Set"] = BTN_FULL if state.browser_active else BTN_DIM
@@ -99,10 +104,10 @@ def button_colors(state):
     rt = e.tracks[e.rate_track] if e.rate_track < len(e.tracks) else e.tracks[0]
     for name in eng.DIVISION_NAMES:
         if e.repeat_on or e.repeat_held:
-            active = e.repeat_count == repeat_for_scene(name)
+            # repeat count: steady light blue, no pulse
+            out[name] = BTN_LIGHT_BLUE if e.repeat_count == repeat_for_scene(name) else BTN_DIM
         else:
-            active = rt["rate"] == name
-        out[name] = _pulse() if active else BTN_DIM
+            out[name] = _pulse() if rt["rate"] == name else BTN_DIM
     return out
 
 

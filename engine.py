@@ -54,6 +54,7 @@ SCALES = {
     "super_locrian": [0, 1, 3, 4, 6, 8, 10],
 }
 SCALE_NAMES = list(SCALES.keys())
+DEFAULT_SCALE = "chromatic"
 SCALE_LABELS = {
     "half_whole_dim": "Half-Whole Dim",
     "whole_half_dim": "Whole-Half Dim",
@@ -123,7 +124,7 @@ def new_track(index):
     return {
         "name": "Track %d" % (index + 1),
         "root": 0,              # used when pattern["scope_global"] is False
-        "scale": "major",
+        "scale": DEFAULT_SCALE,
         "channel": 1,
         "length": STEPS,
         "rate": DEFAULT_RATE,
@@ -142,7 +143,7 @@ def new_track(index):
 def default_pattern():
     return {
         "bpm": DEFAULT_BPM,
-        "root": 0, "scale": "major", "in_key": True,
+        "root": 0, "scale": DEFAULT_SCALE, "in_key": True,
         "scope_global": True,   # True: one key/scale for all tracks. False: each track has its own.
         "tracks": [new_track(i) for i in range(DEFAULT_TRACK_COUNT)],
     }
