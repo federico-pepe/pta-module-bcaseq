@@ -6,15 +6,17 @@ Each quadrant is 4x4. Slot 0 = top-left, 1 = top-right, 2 = bottom-left,
 3 = bottom-right.
 """
 
+import colortable
 import engine as eng
 
-import time
-
 OFF = 0
-STEP_ON = 120       # white
-PLAYHEAD = 126      # pure green
+STEP_SELECTED = 120  # white
+PLAYHEAD = 126       # pure green
 PITCH_WHITE = 120
-BLINK_HZ = 2.0
+
+
+def dim(color):
+    return colortable.dim(color)
 
 
 def quadrant(col, row):
@@ -102,13 +104,20 @@ def pitch_track_for_slot(e, slot):
 
 def pad_press(e, col, row):
     """Handle a pad press. Shift selects without toggling."""
+    if e.color_picker_track is not None:
+        color = eng.color_picker_grid().get((row, col))
+        if color is not None:
+            e.set_track_color(e.color_picker_track, color)
+        return
     slot = quadrant(col, row)
     ti = track_for_slot(e, slot)
     if ti is not None:
         si = step_index(col, row)
         if si >= e.tracks[ti]["length"]:
             return
-        if e.shift:
+        if e.accent_held or e.repeat_held:
+            e.apply_hold(ti, si)
+        elif e.shift:
             if e.sel.get(ti) == si:
                 e.deselect(ti)
             else:
@@ -133,6 +142,10 @@ def pad_press(e, col, row):
 def pad_colors(e):
     """8x8 palette indices, row 0 = bottom."""
     grid = [[OFF] * 8 for _ in range(8)]
+    if e.color_picker_track is not None:
+        for (row, col), color in eng.color_picker_grid().items():
+            grid[row][col] = color
+        return grid
     for slot in (0, 1, 2, 3):
         ti = track_for_slot(e, slot)
         if ti is not None:
@@ -145,12 +158,11 @@ def pad_colors(e):
                 if t["_current_step"] == i:
                     color = PLAYHEAD
                 elif e.sel.get(ti) == i:
-                    # selected step blinks so it differs from other white steps
-                    color = STEP_ON if int(time.monotonic() * BLINK_HZ) % 2 == 0 else t["color"]
+                    color = STEP_SELECTED
                 elif s["on"]:
-                    color = STEP_ON
-                else:
                     color = t["color"]
+                else:
+                    color = dim(t["color"])
                 grid[row][col] = color
             continue
         pt = pitch_track_for_slot(e, slot)

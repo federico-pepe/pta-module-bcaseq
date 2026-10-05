@@ -16,6 +16,8 @@ import re
 import sys
 import time
 
+import colorlab
+import colortable
 import engine as eng
 import layouts
 import view
@@ -59,6 +61,7 @@ class State:
         self.popup_body = None
         self.popup_until = 0.0
         self.active_sequence_name = None
+        self.lab = None               # ColorLab while the Color Lab is open
         self.browser_active = False
         self.browser_names = []
         self.browser_cursor = 0
@@ -108,7 +111,7 @@ def relight(state):
 # -- events ---------------------------------------------------------------------
 
 def handle_pad(state, data):
-    if state.browser_active or not data.get("pressed"):
+    if state.lab is not None or state.browser_active or not data.get("pressed"):
         return
     layouts.pad_press(state.engine, data.get("col"), data.get("row"))
 
@@ -128,15 +131,27 @@ def handle_button(state, data):
 
     if name == "Shift":
         e.shift = pressed
+        if not pressed:
+            e.color_picker_track = None
         return
     if name == "Delete":
         e.delete = pressed
+        return
+    if state.lab is not None:
+        if pressed:
+            _lab_button(state, name)
+        return
+    if name in ("Accent", "Repeat"):
+        _accent_repeat_button(e, name, pressed)
         return
     if not pressed:
         return
 
     if name == "Play":
         e.toggle_play()
+    elif name == "Layout" and e.shift:
+        state.lab = colorlab.ColorLab()
+        state.last_pad_colors = None
     elif name == "Layout":
         layouts.switch_layout(e, e.layout + 1)
         state.show_popup("LAYOUT %d" % (e.layout + 1), LAYOUT_OSD[e.layout])
@@ -144,12 +159,10 @@ def handle_button(state, data):
         e.toggle_scale_menu()
     elif name == "Select (main)":
         e.clear_edit()
-    elif name == "Accent":
-        e.accent_on = not e.accent_on
-    elif name == "Repeat":
-        e.repeat_on = not e.repeat_on
+    elif name in SCREEN_BOTTOM:
+        _track_button(e, SCREEN_BOTTOM[name])
     elif name in eng.DIVISIONS:
-        if e.repeat_on:
+        if e.repeat_on or e.repeat_held:
             e.repeat_count = view.repeat_for_scene(name)
             state.show_popup("REPEAT", str(e.repeat_count))
         else:
@@ -189,11 +202,58 @@ def handle_button(state, data):
         confirm_browser(state)
 
 
+SCREEN_BOTTOM = {"Screen bottom %d" % n: n - 1 for n in range(1, 9)}
+
+
+def _track_button(e, n):
+    """Screen-bottom buttons: each track owns 8 / tracks_per_page buttons."""
+    per = layouts.current(e).tracks_per_page
+    slot = n // (8 // per)
+    page = layouts.page_tracks(e)
+    if slot >= len(page):
+        return
+    if e.shift:
+        e.color_picker_track = page[slot]
+    else:
+        e.select_track(page[slot])
+
+
+def _accent_repeat_button(e, name, pressed):
+    """Tap toggles the mode. Hold plus a pad edits just that pad."""
+    if name == "Accent":
+        if pressed:
+            e.accent_held, e.accent_used = True, False
+        else:
+            e.accent_held = False
+            if not e.accent_used:
+                e.accent_on = not e.accent_on
+    else:
+        if pressed:
+            e.repeat_held, e.repeat_used = True, False
+        else:
+            e.repeat_held = False
+            if not e.repeat_used:
+                e.repeat_on = not e.repeat_on
+
+
+def _lab_button(state, name):
+    if name == "Save":
+        colortable.save()
+        state.show_popup("SAVED", "colors.json")
+    elif name == "Select (main)" or (name == "Layout" and state.engine.shift):
+        state.lab = None
+        state.last_pad_colors = None
+
+
 def handle_encoder(state, data):
     e = state.engine
     idx, delta = data.get("index"), data.get("delta") or 0
     name = data.get("name") or ""
     if delta == 0:
+        return
+    if state.lab is not None:
+        if idx is not None and idx >= 0:
+            state.lab.nudge(idx, delta, view.PALETTE)
         return
     if state.browser_active:
         if name == "Jog wheel turn":

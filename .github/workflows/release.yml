@@ -16,7 +16,7 @@ jobs:
           v=$(python3 -c "import json;print(json.load(open('manifest.json'))['version'])")
           [ "v$v" = "${GITHUB_REF_NAME%%-*}" ] || { echo "tag $GITHUB_REF_NAME does not match manifest $v"; exit 1; }
       - name: Package
-        run: tar -czf bcaseq.tar.gz manifest.json run.py engine.py layouts.py view.py palette.json README.md
+        run: tar -czf bcaseq.tar.gz manifest.json run.py engine.py layouts.py view.py colortable.py colorlab.py palette.json README.md $(ls colors.json 2>/dev/null)
       - uses: softprops/action-gh-release@v3
         with:
           files: bcaseq.tar.gz
