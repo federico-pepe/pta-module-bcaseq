@@ -4,6 +4,8 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import colorlab
+import colortable
 import engine as eng
 import layouts
 import view
@@ -181,18 +183,156 @@ class MainButtonTest(unittest.TestCase):
 
 
 class PadColorTest(unittest.TestCase):
-    def test_empty_is_track_color_on_is_white(self):
+    def test_dim_full_white(self):
         e, _ = make()
         e.tracks[0]["steps"][1]["on"] = True
         grid = layouts.pad_colors(e)
-        self.assertEqual(grid[7][0], e.tracks[0]["color"])   # step 0 empty
-        self.assertEqual(grid[7][1], layouts.STEP_ON)        # step 1 on
-        self.assertEqual(grid[0][7], e.tracks[3]["color"])
+        c = e.tracks[0]["color"]
+        self.assertEqual(grid[7][0], layouts.dim(c))          # empty = dim
+        self.assertEqual(grid[7][1], c)                       # on = full
+        layouts.pad_press(e, 2, 7)                            # tap = on + selected
+        self.assertEqual(layouts.pad_colors(e)[7][2], layouts.STEP_SELECTED)
+
+    def test_every_track_color_has_dim(self):
+        for c in eng.TRACK_COLORS:
+            self.assertIn(c, colortable.DEFAULT_DIM)
+            self.assertNotEqual(layouts.dim(c), c)
+
+    def test_palette_is_full_hardware_table(self):
+        pal = view.PALETTE["byIndex"]
+        self.assertEqual(len(pal), 128)
+        self.assertEqual((pal[67]["r"], pal[67]["g"], pal[67]["b"]), (70, 3, 0))   # not a copy of 66
+
+    def test_dim_is_darker_than_full(self):
+        pal = view.PALETTE["byIndex"]
+        lum = lambda i: pal[i]["r"] + pal[i]["g"] + pal[i]["b"]
+        for c in eng.TRACK_COLORS:
+            self.assertLess(lum(colortable.DEFAULT_DIM[c]), lum(c))
 
     def test_playhead_green(self):
         e, _ = make()
         e.tracks[0]["_current_step"] = 5
         self.assertEqual(layouts.pad_colors(e)[6][1], layouts.PLAYHEAD)
+
+    def test_color_picker(self):
+        e, _ = make()
+        e.color_picker_track = 2
+        grid = layouts.pad_colors(e)
+        self.assertEqual(grid[0][2], eng.TRACK_COLORS[0])
+        layouts.pad_press(e, 2, 0)
+        layouts.pad_press(e, 1, 0)
+        self.assertEqual(e.tracks[2]["color"], eng.TRACK_COLORS[1])
+        self.assertFalse(e.tracks[2]["steps"][0]["on"])      # no step toggled
+
+
+class ColorLabTest(unittest.TestCase):
+    def setUp(self):
+        colortable.reset()
+        self.addCleanup(colortable.reset)
+
+    def test_nudge_and_save_roundtrip(self):
+        import tempfile
+        lab = colorlab.ColorLab()
+        lab.nudge(0, 4, view.PALETTE)                 # next color
+        self.assertEqual(lab.pos, 1)
+        c = lab.color
+        d0 = lab.dim_index()
+        lab.nudge(1, 4, view.PALETTE)                 # dim index +2
+        self.assertEqual(lab.dim_index(), d0 + 2)
+        lab.nudge(2, 5, view.PALETTE)                 # R + 15
+        base = colortable.DEFAULT_RGB[c][0]
+        self.assertEqual(colortable.screen_rgb(c)[0], min(255, base + 15))
+        with tempfile.TemporaryDirectory() as d:
+            path = d + "/colors.json"
+            colortable.save(path)
+            colortable.reset()
+            self.assertEqual(colortable.screen_rgb(c), colortable.DEFAULT_RGB[c])
+            self.assertTrue(colortable.load(path))
+            self.assertEqual(colortable.dim(c), d0 + 2)
+            self.assertEqual(colortable.screen_rgb(c)[0], min(255, base + 15))
+
+    def test_every_track_color_has_measured_screen_rgb(self):
+        for c in eng.TRACK_COLORS:
+            self.assertIn(c, colortable.DEFAULT_RGB)
+        self.assertEqual(view.track_color(25), {"R": 255, "G": 75, "B": 153, "A": 255})   # pink on screen
+
+    def test_screen_uses_tuned_rgb(self):
+        c = eng.TRACK_COLORS[0]
+        colortable.set_entry(c, rgb=(1, 2, 3))
+        self.assertEqual(view.track_color(c), {"R": 1, "G": 2, "B": 3, "A": 255})
+
+    def test_lab_pads_and_screen(self):
+        lab = colorlab.ColorLab()
+        g = lab.pad_colors()
+        self.assertEqual(g[0][0], lab.color)
+        self.assertEqual(g[0][7], lab.dim_index())
+        ops = view._lab_ops(lab, view.color("white"))
+        self.assertTrue(ops)
+
+    def test_bad_file_is_ignored(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = d + "/colors.json"
+            open(p, "w").write("{nope")
+            self.assertFalse(colortable.load(p))
+
+
+class HoldTest(unittest.TestCase):
+    def test_accent_hold_edits_without_toggling(self):
+        e, _ = make()
+        e.accent_held = True
+        layouts.pad_press(e, 0, 7)
+        s = e.tracks[0]["steps"][0]
+        self.assertFalse(s["on"])
+        self.assertEqual(s["vel"], 127)
+        self.assertTrue(e.accent_used)
+        layouts.pad_press(e, 0, 7)                            # again = back to default
+        self.assertEqual(s["vel"], 100)
+
+    def test_repeat_hold_uses_count(self):
+        e, _ = make()
+        e.repeat_held, e.repeat_count = True, 4
+        layouts.pad_press(e, 1, 7)
+        self.assertEqual(e.tracks[0]["steps"][1]["repeat"], 4)
+        self.assertFalse(e.tracks[0]["steps"][1]["on"])
+
+
+class ButtonTest(unittest.TestCase):
+    def setUp(self):
+        import run
+        self.run = run
+        self.e, _ = make()
+
+    def test_tap_toggles_hold_does_not(self):
+        r, e = self.run, self.e
+        r._accent_repeat_button(e, "Accent", True)
+        r._accent_repeat_button(e, "Accent", False)
+        self.assertTrue(e.accent_on)
+        r._accent_repeat_button(e, "Accent", True)
+        layouts.pad_press(e, 0, 7)
+        r._accent_repeat_button(e, "Accent", False)
+        self.assertTrue(e.accent_on)                           # unchanged by the hold
+
+    def test_track_buttons_layout1_and_2(self):
+        r, e = self.run, self.e
+        r._track_button(e, 4)                                  # buttons 5-6 = track 3
+        self.assertEqual(e.rate_track, 2)
+        layouts.switch_layout(e, 1)
+        r._track_button(e, 4)                                  # buttons 5-8 = second track
+        self.assertEqual(e.rate_track, 1)
+
+    def test_shift_track_opens_picker(self):
+        r, e = self.run, self.e
+        e.shift = True
+        r._track_button(e, 2)
+        self.assertEqual(e.color_picker_track, 1)
+
+    def test_select_track_in_edit_mode(self):
+        e = self.e
+        layouts.pad_press(e, 0, 7)
+        e.select_track(2)
+        self.assertEqual(e.edit_track, 2)
+        self.assertEqual(e.sel[2], 0)
 
 
 class PersistTest(unittest.TestCase):
@@ -227,7 +367,7 @@ class LayoutTest(unittest.TestCase):
             pass
         s = S()
         s.engine, _ = make()
-        s.button_held, s.browser_active, s.browser_names, s.browser_cursor = {}, False, [], 0
+        s.button_held, s.browser_active, s.browser_names, s.browser_cursor, s.lab = {}, False, [], 0, None
         s.popup_title = s.popup_body = None
         s.popup_until = 0
         for layout in (0, 1):
@@ -239,7 +379,7 @@ class LayoutTest(unittest.TestCase):
         self.assertTrue(view.draw(s)["ops"])
         # edit mode draws knobs for every track on the page
         kinds = [o["kind"] for o in view.draw(s)["ops"]]
-        self.assertIn("arc", kinds)
+        self.assertIn("knobarc", kinds)
         for layout in (0, 1):
             s.engine.layout = layout
             s.engine.touch_param(2)

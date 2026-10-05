@@ -4,6 +4,8 @@ import json
 import os
 import time
 
+import colortable
+import colorlab
 import engine as eng
 import layouts
 
@@ -21,12 +23,22 @@ def color_by_index(idx):
     return {"R": e["r"], "G": e["g"], "B": e["b"], "A": e["a"]}
 
 
+def track_color(idx):
+    """Screen color for a track color index, tuned in the Color Lab."""
+    rgb = colortable.screen_rgb(idx)
+    if rgb is None:
+        return color_by_index(idx)
+    return {"R": rgb[0], "G": rgb[1], "B": rgb[2], "A": 255}
+
+
 BTN_OFF, BTN_DIM, BTN_FULL, BTN_GREEN = 0, 118, 122, 126
 PULSE_HZ = 1.0
 
 BUTTON_CC = {
     "Play": 85, "Layout": 31, "Scale": 58, "Repeat": 56, "Accent": 57, "Shift": 49,
-    "Delete": 118, "Add": 32, "Select (main)": 28, "Save": 82, "Set": 80,
+    "Delete": 118, "Add": 32, "Select (main)": 28,
+    "Screen bottom 1": 20, "Screen bottom 2": 21, "Screen bottom 3": 22, "Screen bottom 4": 23,
+    "Screen bottom 5": 24, "Screen bottom 6": 25, "Screen bottom 7": 26, "Screen bottom 8": 27, "Save": 82, "Set": 80,
     "Octave Up": 55, "Octave Down": 54, "Page Left": 62, "Page Right": 63,
     "D-Pad up": 46, "D-Pad down": 47, "D-Pad center": 91, "Jog press": 94,
     "Scene 1/4": 36, "Scene 1/4t": 37, "Scene 1/8": 38, "Scene 1/8t": 39,
@@ -50,8 +62,8 @@ def button_colors(state):
     out["Play"] = BTN_GREEN if e.playing else BTN_FULL
     out["Layout"] = BTN_FULL if held.get("Layout") else BTN_DIM
     out["Scale"] = BTN_FULL if e.scale_menu else BTN_DIM
-    out["Repeat"] = BTN_FULL if e.repeat_on else BTN_DIM
-    out["Accent"] = BTN_FULL if e.accent_on else BTN_DIM
+    out["Repeat"] = BTN_FULL if (e.repeat_on or e.repeat_held) else BTN_DIM
+    out["Accent"] = BTN_FULL if (e.accent_on or e.accent_held) else BTN_DIM
     out["Shift"] = BTN_FULL if e.shift else BTN_DIM
     out["Delete"] = BTN_FULL if e.delete else BTN_DIM
     out["Add"] = BTN_FULL if held.get("Add") else (BTN_DIM if len(e.tracks) < eng.MAX_TRACKS else BTN_OFF)
@@ -73,9 +85,21 @@ def button_colors(state):
 
     out["Select (main)"] = BTN_FULL if (e.edit_step() or e.scale_menu) else BTN_DIM
 
+    per = layouts.current(e).tracks_per_page
+    btns_per_track = 8 // per
+    page = layouts.page_tracks(e)
+    for n in range(8):
+        slot = n // btns_per_track
+        name = "Screen bottom %d" % (n + 1)
+        if slot < len(page):
+            t = e.tracks[page[slot]]
+            out[name] = t["color"] if page[slot] == e.rate_track else layouts.dim(t["color"])
+        else:
+            out[name] = BTN_OFF
+
     rt = e.tracks[e.rate_track] if e.rate_track < len(e.tracks) else e.tracks[0]
     for name in eng.DIVISION_NAMES:
-        if e.repeat_on:
+        if e.repeat_on or e.repeat_held:
             active = e.repeat_count == repeat_for_scene(name)
         else:
             active = rt["rate"] == name
@@ -84,6 +108,8 @@ def button_colors(state):
 
 
 def pad_colors(state):
+    if state.lab is not None:
+        return state.lab.pad_colors()
     if state.browser_active:
         return [[0] * 8 for _ in range(8)]
     return layouts.pad_colors(state.engine)
@@ -134,7 +160,9 @@ def draw(state):
     black, white = color("off"), color("white")
     ops = [_rect(0, 0, W, H, black)]
 
-    if state.browser_active:
+    if state.lab is not None:
+        ops += _lab_ops(state.lab, white)
+    elif state.browser_active:
         ops += _browser_ops(state, black, white)
     elif e.scale_menu:
         ops += _scale_ops(e, white)
@@ -144,6 +172,28 @@ def draw(state):
     if state.popup_title is not None and time.monotonic() < state.popup_until:
         ops += _popup_ops(state.popup_title, state.popup_body, black, white)
     return {"ops": ops, "failed": 0}
+
+
+def _lab_ops(lab, white):
+    """Color Lab screen: three swatches to compare with the pads."""
+    full = lab.color
+    pal = PALETTE["byIndex"]
+    dim_i = lab.dim_index()
+    rgb = lab.rgb(PALETTE)
+    gray = color("gray_mid")
+    sw = lambda x, c: _rect(x, 36, 150, 56, c)
+    pc = lambda i: color_by_index(i)
+    ops = [
+        _text(8, 14, "COLOR LAB  %d/%d" % (lab.pos + 1, len(eng.TRACK_COLORS)), white),
+        _text(250, 14, "Enc1 color  Enc2 dim pad  Enc3-5 screen R G B  Enc6 reset", gray),
+        _text(8, 152, "Save = write colors.json    Shift+Layout or Select = exit", gray),
+        sw(8, pc(full)), sw(176, {"R": rgb[0], "G": rgb[1], "B": rgb[2], "A": 255}), sw(344, pc(dim_i)),
+        _text(8, 108, "PALETTE %d %s" % (full, pal[full]["name"]), gray),
+        _text(176, 108, "SCREEN %d %d %d" % rgb, white),
+        _text(344, 108, "DIM PAD %d %s" % (dim_i, pal[dim_i]["name"]), gray),
+        _text(8, 130, "Match the middle swatch to how the pads look.", gray),
+    ]
+    return ops
 
 
 def _scale_ops(e, white):
@@ -160,16 +210,24 @@ def _scale_ops(e, white):
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
-# Edit-mode knobs: encoder index (1-7) -> short label. Encoder 0 is Pitch, drawn big.
+# Edit-mode gauge knobs: encoder 1-7 -> short label. Encoder 0 is Pitch, drawn big.
 KNOB_LABELS = ["VEL", "GATE", "PROB", "OFF", "MIDI", "REP", "LEN"]
 KNOB_FIELD = {"VEL": "vel", "GATE": "gate", "PROB": "prob", "OFF": "offset",
               "MIDI": "channel", "REP": "repeat", "LEN": "length"}
 KNOB_RANGE = {"VEL": (1, 127), "GATE": (2, 99), "PROB": (0, 100), "OFF": (-45, 45),
               "MIDI": (1, 16), "REP": (1, eng.MAX_REPEAT), "LEN": (1, eng.STEPS)}
-KNOB_R = 11
-KNOB_ROW_Y = (40, 88)
-BAR_Y, BAR_H = 138, 6
+KNOB_R = 15
+KNOB_ROW_Y = (38, 92)
 DIVIDER = 124  # dgray palette index
+DIVIDER_Y, DIVIDER_H = 22, 132
+
+# Main screen
+INFO_BASELINE = 16
+NOTE_BASELINE = 76
+MAIN_BAR_Y = 96
+STRIP_Y, STRIP_H = 132, 22   # track names, directly above the Screen-bottom buttons
+EDIT_BAR_Y = 138
+BAR_H = 6
 
 
 def display_step(e, ti):
@@ -190,22 +248,27 @@ def rate_label(t):
     return t["rate"].replace("Scene ", "")
 
 
-def _bar(x, w, c, frac):
+def _bar(x, y, w, c, frac):
     fill = max(2, int(round(w * max(0.0, min(1.0, frac)))))
-    return [_rect(x, BAR_Y, w, BAR_H, color_by_index(124)), _rect(x, BAR_Y, fill, BAR_H, c)]
+    return [_rect(x, y, w, BAR_H, color_by_index(124)), _rect(x, y, fill, BAR_H, c)]
 
 
-def _ring(cx, cy, r, c, frac):
-    """Dim full ring plus a two-pixel sweep in the track color."""
-    ops = [{"kind": "arc", "params": {"cx": cx, "cy": cy, "r": r, "frac": 1.0, "c": color_by_index(124)}}]
-    if frac > 0:
-        for rr in (r, r - 1):
-            ops.append({"kind": "arc", "params": {"cx": cx, "cy": cy, "r": rr, "frac": frac, "c": c}})
-    return ops
+def _gauge(cx, cy, c, val, lo, hi):
+    """Host knobarc: 300 degree gauge. The host always prints the value in
+    the middle, so a black rect covers it. The value shows under the knob
+    only while it is touched (see _sequencer_ops)."""
+    return [
+        {"kind": "knobarc", "params": {"cx": cx, "cy": cy, "r": KNOB_R, "k": {
+            "Label": "", "Value": val, "Min": lo, "Max": hi, "Color": c, "Bipolar": lo < 0}}},
+        _rect(cx - 11, cy - 9, 22, 14, color("off")),
+    ]
+
+
+def _dividers(col_w, n):
+    return [_rect(i * col_w, DIVIDER_Y, 1, DIVIDER_H, color_by_index(DIVIDER)) for i in range(1, n)]
 
 
 def _sequencer_ops(e):
-    ops = []
     tracks = layouts.page_tracks(e)
     n = layouts.current(e).tracks_per_page
     col_w = W // n
@@ -214,27 +277,34 @@ def _sequencer_ops(e):
     now = time.monotonic()
     white = color("white")
     shown = e.active_param[0] if (e.active_param and now < e.active_param[1]) else None
+    ops = []
+
+    if not editing:
+        ops.append(_text(8, INFO_BASELINE, _status_line(e), color("gray_mid")))
+        ops += _dividers(col_w, n)
+        for slot, ti in enumerate(tracks):
+            t = e.tracks[ti]
+            x = slot * col_w
+            c = track_color(t["color"])
+            note = note_name(t["_last_note"]) if t["_last_note"] is not None else "-"
+            ops.append(_text(x + 8, NOTE_BASELINE, note, c, 3))
+            ops += _bar(x + 8, MAIN_BAR_Y, col_w - 24, c, t["_progress"])
+            ops += _strip_cell(e, ti, x, col_w)
+        return ops
 
     for slot, ti in enumerate(tracks):
         t = e.tracks[ti]
         x = slot * col_w
-        hot = editing and ti == es[0]
-        c = white if hot else color_by_index(t["color"])
+        hot = ti == es[0]
+        c = white if hot else track_color(t["color"])
         rate_x = x + col_w - 8 - CHAR_W * len(rate_label(t))
         ops.append(_text(x + 8, LABEL_BASELINE, t["name"], c))
         ops.append(_text(rate_x, LABEL_BASELINE, rate_label(t), white if hot else color("gray_mid")))
 
-        if not editing:
-            note = note_name(t["_last_note"]) if t["_last_note"] is not None else "-"
-            ops.append(_text(x + 8, 76, note, c, 3))
-            ops += _bar(x + 8, col_w - 24, c, t["_progress"])
-            continue
-
         s = display_step(e, ti)
         ops.append(_text(x + 8, 66, note_name(s["pitch"]), c, 3))
         ops.append(_text(x + 8, 80, "PITCH", c))
-        pitch_hot = hot and shown == 0
-        if pitch_hot:
+        if hot and shown == 0:
             ops.append(_rect(x + 8, 84, CHAR_W * 5, 2, c))
         spacing = (col_w - 132) // 3
         for j, label in enumerate(KNOB_LABELS):
@@ -242,17 +312,36 @@ def _sequencer_ops(e):
             cy = KNOB_ROW_Y[j // 4]
             lo, hi = KNOB_RANGE[label]
             val = knob_value(t, s, label)
-            ops += _ring(cx, cy, KNOB_R, c, (val - lo) / float(hi - lo))
-            text = str(val) if (hot and shown == j + 1) else label
-            ops.append(_text(cx - CHAR_W * len(text) // 2, cy + KNOB_R + 14, text, c))
-        ops += _bar(x + 8, col_w - 24, c, t["_progress"])
-        if slot > 0 and not hot and tracks[slot - 1] != es[0]:
-            ops.append(_rect(x, 8, 1, 144, color_by_index(DIVIDER)))
+            ops += _gauge(cx, cy, c, val, lo, hi)
+            active = hot and shown == j + 1
+            text = str(val) if active else label
+            tx = cx - CHAR_W * len(text) // 2
+            ops.append(_text(tx, cy + KNOB_R + 13, text, c))
+            if active:
+                ops.append(_rect(tx, cy + KNOB_R + 16, CHAR_W * len(text), 1, c))
+        ops += _bar(x + 8, EDIT_BAR_Y, col_w - 24, c, t["_progress"])
         if hot:
             ops += corners(x + 2, 1, col_w - 4, H - 3, white)
+    ops += _dividers(col_w, n)
+    return ops
 
-    if not editing:
-        ops.append(_text(8, 154, _status_line(e), color("gray_mid")))
+
+def _strip_cell(e, ti, x, col_w):
+    """Track name and rate above the Screen-bottom buttons. The selected
+    track (rate target) is a filled block."""
+    t = e.tracks[ti]
+    c = track_color(t["color"])
+    rate = rate_label(t)
+    if ti == e.rate_track:
+        ops = [_rect(x + 2, STRIP_Y, col_w - 3, STRIP_H, c)]
+        txt = color("off")
+        rate_c = txt
+    else:
+        ops = []
+        txt, rate_c = c, color("gray_mid")
+    base = STRIP_Y + 16
+    ops.append(_text(x + 8, base, t["name"], txt))
+    ops.append(_text(x + col_w - 8 - CHAR_W * len(rate), base, rate, rate_c))
     return ops
 
 
