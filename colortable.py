@@ -3,8 +3,8 @@
 The pad LEDs and the screen show the same palette index differently, so each
 track color has two tuned values: the palette index of its dim pad shade and
 the RGB the screen uses. The screen defaults are measured from the original
-Push. colors.json holds overrides made on the device with the Color Lab
-(Shift + Layout).
+Push. colors.json (optional) holds overrides. The colorlab-py example module
+in push-tethered-app writes a file in this format.
 """
 
 import json
@@ -89,7 +89,7 @@ def dim(color):
 
 
 def screen_rgb(color):
-    """RGB for the screen: a Color Lab override, else the measured default,
+    """RGB for the screen: an override from colors.json, else the measured default,
     else None to use the palette RGB."""
     return _rgb.get(color, DEFAULT_RGB.get(color))
 
