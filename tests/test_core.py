@@ -10,10 +10,15 @@ import layouts
 import view
 
 
-def make():
+def make(scale="major"):
+    """Engine with C major unless scale=None (then the real default)."""
     notes = []
     e = eng.Engine(lambda ch, n, v: notes.append(("on", ch, n, v)),
                    lambda ch, n: notes.append(("off", ch, n)))
+    if scale:
+        e.pattern["scale"] = scale
+        for t in e.tracks:
+            t["scale"] = scale
     return e, notes
 
 
@@ -421,6 +426,59 @@ class PitchFlashTest(unittest.TestCase):
         t = e.tracks[0]
         self.assertEqual(t["_lit_note"], 60)
         self.assertGreaterEqual(t["_lit_until"] - (e.play_start + 0.001), eng.FLASH_MIN_S - 1e-6)
+
+
+class DefaultsAndButtonsTest(unittest.TestCase):
+    def test_default_key_is_c_chromatic(self):
+        e, _ = make(scale=None)
+        self.assertEqual(e.key_of(0), (0, "chromatic"))
+        e.nudge_scale_menu(4, -4)                     # Track scope copies the global key
+        self.assertTrue(all(t["scale"] == "chromatic" for t in e.tracks))
+        self.assertEqual(eng.new_track(0)["scale"], "chromatic")
+
+    def _state(self):
+        class S:
+            pass
+        s = S()
+        s.engine, _ = make()
+        s.button_held, s.browser_active, s.browser_names, s.browser_cursor = {}, False, [], 0
+        return s
+
+    def test_white_led_buttons_have_a_clearly_dim_level(self):
+        s = self._state()
+        e = s.engine
+        idle = view.button_colors(s)
+        for name in view.WHITE_LED_BUTTONS:
+            self.assertEqual(idle[name], view.BTN_WHITE_DIM)
+        self.assertLess(view.BTN_WHITE_DIM, view.BTN_FULL // 3)
+        e.accent_on, e.repeat_on, e.shift, e.delete = True, True, True, True
+        lit = view.button_colors(s)
+        for name in view.WHITE_LED_BUTTONS:
+            self.assertEqual(lit[name], view.BTN_FULL)
+
+    def test_repeat_count_is_steady_light_blue(self):
+        s = self._state()
+        e = s.engine
+        e.repeat_on, e.repeat_count = True, 3
+        seen = set()
+        for _ in range(4):                            # pulse phases must not matter
+            cols = view.button_colors(s)
+            seen.add(cols[eng.DIVISION_NAMES[8 - 3]])
+            import time as _t
+            _t.sleep(0.3)
+        self.assertEqual(seen, {view.BTN_LIGHT_BLUE})
+        cols = view.button_colors(s)
+        others = [cols[n] for n in eng.DIVISION_NAMES if n != eng.DIVISION_NAMES[5]]
+        self.assertEqual(set(others), {view.BTN_DIM})
+
+    def test_rate_still_pulses_green_when_repeat_is_off(self):
+        s = self._state()
+        vals = set()
+        import time as _t
+        for _ in range(6):
+            vals.add(view.button_colors(s)[s.engine.tracks[0]["rate"]])
+            _t.sleep(0.3)
+        self.assertEqual(vals, {view.BTN_GREEN, view.BTN_OFF})
 
 
 class ScaleMenuLayoutTest(unittest.TestCase):
