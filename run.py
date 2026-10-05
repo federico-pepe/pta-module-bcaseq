@@ -16,8 +16,6 @@ import re
 import sys
 import time
 
-import colorlab
-import colortable
 import engine as eng
 import layouts
 import view
@@ -61,7 +59,6 @@ class State:
         self.popup_body = None
         self.popup_until = 0.0
         self.active_sequence_name = None
-        self.lab = None               # ColorLab while the Color Lab is open
         self.browser_active = False
         self.browser_names = []
         self.browser_cursor = 0
@@ -111,7 +108,7 @@ def relight(state):
 # -- events ---------------------------------------------------------------------
 
 def handle_pad(state, data):
-    if state.lab is not None or state.browser_active or not data.get("pressed"):
+    if state.browser_active or not data.get("pressed"):
         return
     layouts.pad_press(state.engine, data.get("col"), data.get("row"))
 
@@ -137,10 +134,6 @@ def handle_button(state, data):
     if name == "Delete":
         e.delete = pressed
         return
-    if state.lab is not None:
-        if pressed:
-            _lab_button(state, name)
-        return
     if name in ("Accent", "Repeat"):
         _accent_repeat_button(e, name, pressed)
         return
@@ -149,9 +142,6 @@ def handle_button(state, data):
 
     if name == "Play":
         e.toggle_play()
-    elif name == "Layout" and e.shift:
-        state.lab = colorlab.ColorLab()
-        state.last_pad_colors = None
     elif name == "Layout":
         layouts.switch_layout(e, e.layout + 1)
         state.show_popup("LAYOUT %d" % (e.layout + 1), LAYOUT_OSD[e.layout])
@@ -236,24 +226,11 @@ def _accent_repeat_button(e, name, pressed):
                 e.repeat_on = not e.repeat_on
 
 
-def _lab_button(state, name):
-    if name == "Save":
-        colortable.save()
-        state.show_popup("SAVED", "colors.json")
-    elif name == "Select (main)" or (name == "Layout" and state.engine.shift):
-        state.lab = None
-        state.last_pad_colors = None
-
-
 def handle_encoder(state, data):
     e = state.engine
     idx, delta = data.get("index"), data.get("delta") or 0
     name = data.get("name") or ""
     if delta == 0:
-        return
-    if state.lab is not None:
-        if idx is not None and idx >= 0:
-            state.lab.nudge(idx, delta, view.PALETTE)
         return
     if state.browser_active:
         if name == "Jog wheel turn":

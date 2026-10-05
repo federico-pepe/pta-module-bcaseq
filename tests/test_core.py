@@ -4,7 +4,6 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import colorlab
 import colortable
 import engine as eng
 import layouts
@@ -225,49 +224,43 @@ class PadColorTest(unittest.TestCase):
         self.assertFalse(e.tracks[2]["steps"][0]["on"])      # no step toggled
 
 
-class ColorLabTest(unittest.TestCase):
+class ColorTableTest(unittest.TestCase):
     def setUp(self):
         colortable.reset()
         self.addCleanup(colortable.reset)
 
-    def test_nudge_and_save_roundtrip(self):
+    def test_override_file_roundtrip(self):
         import tempfile
-        lab = colorlab.ColorLab()
-        lab.nudge(0, 4, view.PALETTE)                 # next color
-        self.assertEqual(lab.pos, 1)
-        c = lab.color
-        d0 = lab.dim_index()
-        lab.nudge(1, 4, view.PALETTE)                 # dim index +2
-        self.assertEqual(lab.dim_index(), d0 + 2)
-        lab.nudge(2, 5, view.PALETTE)                 # R + 15
-        base = colortable.DEFAULT_RGB[c][0]
-        self.assertEqual(colortable.screen_rgb(c)[0], min(255, base + 15))
+        c = eng.TRACK_COLORS[1]
+        colortable.set_entry(c, dim_idx=77, rgb=(1, 2, 3))
         with tempfile.TemporaryDirectory() as d:
             path = d + "/colors.json"
             colortable.save(path)
             colortable.reset()
             self.assertEqual(colortable.screen_rgb(c), colortable.DEFAULT_RGB[c])
             self.assertTrue(colortable.load(path))
-            self.assertEqual(colortable.dim(c), d0 + 2)
-            self.assertEqual(colortable.screen_rgb(c)[0], min(255, base + 15))
+            self.assertEqual(colortable.dim(c), 77)
+            self.assertEqual(colortable.screen_rgb(c), (1, 2, 3))
+
+    def test_colorlab_py_file_format(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            path = d + "/colors.json"
+            open(path, "w").write('{"version": 1, "colors": {"7": {"dim": 78}, "9": {"rgb": [4, 5, 6]}}}')
+            self.assertTrue(colortable.load(path))
+            self.assertEqual(colortable.dim(7), 78)
+            self.assertEqual(colortable.screen_rgb(9), (4, 5, 6))
+            self.assertEqual(colortable.screen_rgb(7), colortable.DEFAULT_RGB[7])
 
     def test_every_track_color_has_measured_screen_rgb(self):
         for c in eng.TRACK_COLORS:
             self.assertIn(c, colortable.DEFAULT_RGB)
         self.assertEqual(view.track_color(25), {"R": 255, "G": 75, "B": 153, "A": 255})   # pink on screen
 
-    def test_screen_uses_tuned_rgb(self):
+    def test_screen_uses_override(self):
         c = eng.TRACK_COLORS[0]
         colortable.set_entry(c, rgb=(1, 2, 3))
         self.assertEqual(view.track_color(c), {"R": 1, "G": 2, "B": 3, "A": 255})
-
-    def test_lab_pads_and_screen(self):
-        lab = colorlab.ColorLab()
-        g = lab.pad_colors()
-        self.assertEqual(g[0][0], lab.color)
-        self.assertEqual(g[0][7], lab.dim_index())
-        ops = view._lab_ops(lab, view.color("white"))
-        self.assertTrue(ops)
 
     def test_bad_file_is_ignored(self):
         import tempfile
@@ -367,7 +360,7 @@ class LayoutTest(unittest.TestCase):
             pass
         s = S()
         s.engine, _ = make()
-        s.button_held, s.browser_active, s.browser_names, s.browser_cursor, s.lab = {}, False, [], 0, None
+        s.button_held, s.browser_active, s.browser_names, s.browser_cursor = {}, False, [], 0
         s.popup_title = s.popup_body = None
         s.popup_until = 0
         for layout in (0, 1):
