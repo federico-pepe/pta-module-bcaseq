@@ -79,6 +79,21 @@ DEFAULT_PITCH = 60  # C3 in Live numbering
 PARAM_SHOW_S = 1.5   # seconds a knob shows its value after a touch
 
 
+# Color picker (Shift + track button): TRACK_COLORS around the border pads,
+# (row, col) with row 0 at the bottom, walked clockwise from the bottom edge.
+COLOR_PICKER_BORDER = [
+    (0, 2), (0, 1), (0, 0),
+    (1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (6, 0), (7, 0),
+    (7, 1), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (7, 7),
+    (6, 7), (5, 7), (4, 7), (3, 7), (2, 7), (1, 7), (0, 7),
+    (0, 6), (0, 5), (0, 4), (0, 3),
+]
+
+
+def color_picker_grid():
+    return {pos: TRACK_COLORS[i] for i, pos in enumerate(COLOR_PICKER_BORDER) if i < len(TRACK_COLORS)}
+
+
 class Friction:
     """Turns raw encoder deltas into logical steps. Remainder carries over."""
 
@@ -172,6 +187,11 @@ class Engine:
 
         self.accent_on = False
         self.repeat_on = False
+        self.accent_held = False     # button currently down
+        self.repeat_held = False
+        self.accent_used = False     # a pad was pressed during this hold
+        self.repeat_used = False
+        self.color_picker_track = None
         self.repeat_count = 1
         self.shift = False
         self.delete = False
@@ -196,11 +216,40 @@ class Engine:
         """Remember a knob so the screen shows its value for a moment."""
         self.active_param = (idx, time.monotonic() + PARAM_SHOW_S)
 
+    def select_track(self, track_idx):
+        """Track button: make it the rate target. In edit mode, edit it too."""
+        if not (0 <= track_idx < len(self.tracks)):
+            return
+        self.rate_track = track_idx
+        if self.edit_track is not None:
+            if track_idx in self.sel:
+                self.edit_track = track_idx
+                self.friction.reset()
+            else:
+                self.select_step(track_idx, 0)
+
+    def apply_hold(self, track_idx, step_idx):
+        """Accent or Repeat held while a pad is pressed: change that step's
+        value without toggling it on or off. Pressing again reverts it."""
+        s = self.tracks[track_idx]["steps"][step_idx]
+        if self.accent_held:
+            self.accent_used = True
+            s["vel"] = DEFAULT_VELOCITY if s["vel"] == ACCENT_VELOCITY else ACCENT_VELOCITY
+        if self.repeat_held:
+            self.repeat_used = True
+            s["repeat"] = 1 if s["repeat"] == self.repeat_count else self.repeat_count
+        self.select_step(track_idx, step_idx)
+
+    def set_track_color(self, track_idx, color):
+        if 0 <= track_idx < len(self.tracks) and color in TRACK_COLORS:
+            self.tracks[track_idx]["color"] = color
+
     def clear_edit(self):
         """Back to the main screen: leave edit mode and the scale menu."""
         self.edit_track = None
         self.sel = {}
         self.scale_menu = False
+        self.color_picker_track = None
         self.active_param = None
         self.friction.reset()
 
