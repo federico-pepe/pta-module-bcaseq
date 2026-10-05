@@ -20,7 +20,9 @@ and edit it. Shift + pad selects without toggling. Edit encoders 1-8: Pitch (big
 
 ### Layout 2
 Two tracks (left quadrants). The right quadrants pick the pitch of the selected step of the track
-on the same row. Octave Up/Down moves the range and shows it on screen.
+on the same row. Octave Up/Down moves the range and shows it on screen. When a track plays a note, its pad in the pitch grid flashes green.
+
+Each track remembers the last note you entered, with a pitch pad or the Pitch encoder. A new step starts from that note. A step that already has a note keeps it when you turn it off and on.
 
 ### Main screen
 BPM and scale are at the top. Each track shows the last note played and a bar for its position in the loop. Track names and rates are at the bottom, above the Screen-bottom buttons. The selected track is a filled block.

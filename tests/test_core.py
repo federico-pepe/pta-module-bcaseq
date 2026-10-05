@@ -332,6 +332,97 @@ class ScopeTest(unittest.TestCase):
         self.assertTrue(e2.pattern["scope_global"])
 
 
+class LastNoteTest(unittest.TestCase):
+    def test_new_step_uses_last_note_of_the_track(self):
+        e, _ = make()
+        e.layout = 1
+        layouts.pad_press(e, 0, 7)                    # track 1 step 0
+        layouts.pad_press(e, 6, 4)                    # TR pitch pad index 2 -> E3 (64)
+        layouts.pad_press(e, 1, 7)                    # track 1 step 1: new step
+        self.assertEqual(e.tracks[0]["steps"][1]["pitch"], 64)
+        layouts.pad_press(e, 0, 3)                    # track 2 step 0: its own memory, still C3
+        self.assertEqual(e.tracks[1]["steps"][0]["pitch"], 60)
+
+    def test_encoder_updates_the_memory(self):
+        e, _ = make()
+        layouts.pad_press(e, 0, 7)
+        e.nudge(0, 8)                                 # two scale steps: E3
+        layouts.pad_press(e, 1, 7)
+        self.assertEqual(e.tracks[0]["steps"][1]["pitch"], 64)
+
+    def test_step_keeps_its_own_pitch_when_toggled(self):
+        e, _ = make()
+        layouts.pad_press(e, 0, 7)
+        e.nudge(0, 8)                                 # step 0 = E3, memory E3
+        layouts.pad_press(e, 1, 7)
+        e.nudge(0, 4)                                 # step 1 = F3, memory F3
+        layouts.pad_press(e, 0, 7)                    # step 0 off
+        layouts.pad_press(e, 0, 7)                    # step 0 on again
+        self.assertEqual(e.tracks[0]["steps"][0]["pitch"], 64)
+
+    def test_first_note_follows_the_key(self):
+        e, _ = make()
+        e.nudge_scale_menu(0, 8)                      # root D
+        layouts.pad_press(e, 0, 7)
+        self.assertEqual(e.tracks[0]["steps"][0]["pitch"], 62)
+
+    def test_memory_persists_and_old_files_load(self):
+        e, _ = make()
+        layouts.pad_press(e, 0, 7)
+        e.nudge(0, 8)
+        e2, _ = make()
+        self.assertTrue(e2.load(e.to_doc()))
+        self.assertEqual(e2.tracks[0]["last_pitch"], 64)
+        layouts.pad_press(e2, 1, 7)
+        self.assertEqual(e2.tracks[0]["steps"][1]["pitch"], 64)
+        doc = e.to_doc()
+        for t in doc["pattern"]["tracks"]:
+            t.pop("last_pitch", None)
+            for st in t["steps"]:
+                st.pop("pitch_set", None)
+        e3, _ = make()
+        self.assertTrue(e3.load(doc))
+        self.assertIsNone(e3.tracks[0]["last_pitch"])
+        self.assertTrue(e3.tracks[0]["steps"][0]["pitch_set"])    # moved off C3, so counts as set
+
+
+class PitchFlashTest(unittest.TestCase):
+    def setUp(self):
+        self.e, _ = make()
+        self.e.layout = 1
+
+    def pad_of(self, grid, note):
+        notes = eng.grid_pitches(0, "major", True, self.e.octave)
+        i = notes.index(note)
+        return grid[4 + i // 4][4 + i % 4]               # TR quadrant, track 1
+
+    def test_triggered_note_flashes_green(self):
+        import time as _t
+        t = self.e.tracks[0]
+        t["_lit_note"], t["_lit_until"] = 64, _t.monotonic() + 10
+        grid = layouts.pad_colors(self.e)
+        self.assertEqual(self.pad_of(grid, 64), layouts.PLAYHEAD)
+        self.assertEqual(self.pad_of(grid, 62), layouts.PITCH_WHITE)
+
+    def test_flash_expires_and_ignores_other_octaves(self):
+        import time as _t
+        t = self.e.tracks[0]
+        t["_lit_note"], t["_lit_until"] = 64, _t.monotonic() - 1
+        self.assertNotEqual(self.pad_of(layouts.pad_colors(self.e), 64), layouts.PLAYHEAD)
+        t["_lit_note"], t["_lit_until"] = 30, _t.monotonic() + 10    # not on this octave
+        grid = layouts.pad_colors(self.e)
+        self.assertFalse(any(self.pad_of(grid, n) == layouts.PLAYHEAD for n in (60, 62, 64)))
+
+    def test_trigger_sets_the_flash(self):
+        e = self.e
+        layouts.pad_press(e, 0, 7)
+        e.start()
+        e.tick(e.play_start + 0.001)
+        t = e.tracks[0]
+        self.assertEqual(t["_lit_note"], 60)
+        self.assertGreaterEqual(t["_lit_until"] - (e.play_start + 0.001), eng.FLASH_MIN_S - 1e-6)
+
+
 class ScaleMenuLayoutTest(unittest.TestCase):
     def test_no_scale_name_reaches_the_next_cell(self):
         e, _ = make()

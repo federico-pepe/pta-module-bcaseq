@@ -77,6 +77,7 @@ PARAM_DEFAULT = {"velocity": 100, "gate": 50, "probability": 100, "offset": 0, "
 
 DEFAULT_VELOCITY, ACCENT_VELOCITY = 100, 127
 DEFAULT_PITCH = 60  # C3 in Live numbering
+FLASH_MIN_S = 0.12   # a triggered note lights its pitch pad at least this long
 PARAM_SHOW_S = 1.5   # seconds a knob shows its value after a touch
 
 
@@ -114,8 +115,8 @@ class Friction:
 
 
 def new_step():
-    return {"on": False, "pitch": DEFAULT_PITCH, "vel": DEFAULT_VELOCITY, "gate": 50,
-            "prob": 100, "offset": 0, "repeat": 1}
+    return {"on": False, "pitch": DEFAULT_PITCH, "pitch_set": False, "vel": DEFAULT_VELOCITY,
+            "gate": 50, "prob": 100, "offset": 0, "repeat": 1}
 
 
 def new_track(index):
@@ -129,7 +130,10 @@ def new_track(index):
         "steps": [new_step() for _ in range(STEPS)],
         "color": TRACK_COLORS[(index * TRACK_COLOR_STEP) % len(TRACK_COLORS)],
         "_current_step": -1,
+        "last_pitch": None,     # last note entered on this track. New steps start from it.
         "_last_note": None,
+        "_lit_note": None,      # note that just sounded, for the pitch pad flash
+        "_lit_until": 0.0,
         "_progress": 0.0,       # 0-1 position inside the track's loop
         "_ext_acc": 0,
     }
@@ -326,10 +330,14 @@ class Engine:
             t["length"] = max(1, min(STEPS, int(saved.get("length", STEPS))))
             r = saved.get("rate", legacy_rate)
             t["rate"] = r if r in DIVISIONS else DEFAULT_RATE
+            lp = saved.get("last_pitch")
+            t["last_pitch"] = max(0, min(127, lp)) if isinstance(lp, int) and not isinstance(lp, bool) else None
             saved_steps = saved.get("steps") or []
             for j in range(STEPS):
                 if j < len(saved_steps) and isinstance(saved_steps[j], dict):
                     t["steps"][j].update({k: v for k, v in saved_steps[j].items() if k in t["steps"][j]})
+                    if "pitch_set" not in saved_steps[j]:   # older file: a moved pitch counts as set
+                        t["steps"][j]["pitch_set"] = t["steps"][j]["pitch"] != DEFAULT_PITCH
             tracks.append(t)
         out["tracks"] = tracks or [new_track(i) for i in range(DEFAULT_TRACK_COUNT)]
         self.stop()
@@ -359,7 +367,9 @@ class Engine:
         s = t["steps"][step_idx]
         s["on"] = not s["on"]
         if s["on"]:
-            s["pitch"] = s["pitch"] if s["pitch"] != DEFAULT_PITCH else self.default_pitch(track_idx)
+            if not s["pitch_set"]:
+                s["pitch"] = self.entry_pitch(track_idx)
+                s["pitch_set"] = True
             s["vel"] = ACCENT_VELOCITY if self.accent_on else DEFAULT_VELOCITY
             s["repeat"] = self.repeat_count if self.repeat_on else 1
             self.select_step(track_idx, step_idx)
@@ -379,8 +389,19 @@ class Engine:
             self.edit_track = None
         self.friction.reset()
 
+    def entry_pitch(self, track_idx):
+        """Pitch for a new step: the last note entered on this track."""
+        last = self.tracks[track_idx]["last_pitch"]
+        return last if last is not None else self.default_pitch(track_idx)
+
+    def _remember_pitch(self, track_idx, step):
+        step["pitch_set"] = True
+        self.tracks[track_idx]["last_pitch"] = step["pitch"]
+
     def set_pitch(self, track_idx, step_idx, note):
-        self.tracks[track_idx]["steps"][step_idx]["pitch"] = max(0, min(127, note))
+        s = self.tracks[track_idx]["steps"][step_idx]
+        s["pitch"] = max(0, min(127, note))
+        self._remember_pitch(track_idx, s)
 
     def _step_pitch(self, note, direction, track_idx=0):
         """One pitch step: next scale note when In Key is on, else a semitone."""
@@ -412,6 +433,7 @@ class Engine:
         if param == "pitch":
             for _ in range(abs(n)):
                 s["pitch"] = self._step_pitch(s["pitch"], 1 if n > 0 else -1, ti)
+            self._remember_pitch(ti, s)
         elif param == "channel":
             t["channel"] = max(lo, min(hi, t["channel"] + n))
         elif param == "length":
@@ -555,11 +577,14 @@ class Engine:
         dur = self.step_duration(t)
         repeats = max(1, s["repeat"])
         slot = dur / repeats
+        off_at = now
         for r in range(repeats):
             fire_at = now + (s["offset"] / 100.0) * dur + r * slot
             off_at = fire_at + (s["gate"] / 100.0) * slot
             self._schedule(t["channel"], s["pitch"], s["vel"], fire_at, off_at, now)
         t["_last_note"] = s["pitch"]
+        t["_lit_note"] = s["pitch"]
+        t["_lit_until"] = max(off_at, now + FLASH_MIN_S)
 
     def _schedule(self, ch, note, vel, fire_at, off_at, now):
         if fire_at <= now + 0.001:
