@@ -199,11 +199,11 @@ def _scale_ops(e, white):
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 # Edit-mode gauge knobs: encoder 1-7 -> short label. Encoder 0 is Pitch, drawn big.
-KNOB_LABELS = ["VEL", "GATE", "PROB", "OFF", "MIDI", "REP", "LEN"]
+KNOB_LABELS = ["VEL", "GATE", "PROB", "OFF", "MIDI", "REP", "N LEN"]
 KNOB_FIELD = {"VEL": "vel", "GATE": "gate", "PROB": "prob", "OFF": "offset",
-              "MIDI": "channel", "REP": "repeat", "LEN": "length"}
+              "MIDI": "channel", "REP": "repeat", "N LEN": "len"}
 KNOB_RANGE = {"VEL": (1, 127), "GATE": (2, 99), "PROB": (0, 100), "OFF": (-45, 45),
-              "MIDI": (1, 16), "REP": (1, eng.MAX_REPEAT), "LEN": (1, eng.STEPS)}
+              "MIDI": (1, 16), "REP": (1, eng.MAX_REPEAT), "N LEN": (1, eng.STEPS)}
 KNOB_R = 15
 KNOB_ROW_Y = (38, 92)
 DIVIDER = 124  # dgray palette index
@@ -213,6 +213,7 @@ DIVIDER_Y, DIVIDER_H = 22, 132
 INFO_BASELINE = 16
 NOTE_BASELINE = 76
 MAIN_BAR_Y = 96
+SLEN_Y = 50   # centre of the S LEN knob
 STRIP_Y, STRIP_H = 132, 22   # track names, directly above the Screen-bottom buttons
 EDIT_BAR_Y = 138
 BAR_H = 6
@@ -229,7 +230,15 @@ def display_step(e, ti):
 
 def knob_value(t, s, label):
     f = KNOB_FIELD[label]
-    return t[f] if f in ("channel", "length") else s[f]
+    return t[f] if f == "channel" else s[f]
+
+
+def sounding_note(t, now):
+    """The note a track is playing right now, else None. The screen shows no
+    pitch for a note that is not triggered."""
+    if t["_lit_note"] is not None and now < t["_show_until"]:
+        return t["_lit_note"]
+    return None
 
 
 def rate_label(t):
@@ -261,7 +270,7 @@ def _sequencer_ops(e):
     n = layouts.current(e).tracks_per_page
     col_w = W // n
     es = e.edit_step()
-    editing = es is not None and es[0] in tracks
+    editing = layouts.editing(e)
     now = time.monotonic()
     white = color("white")
     shown = e.active_param[0] if (e.active_param and now < e.active_param[1]) else None
@@ -274,8 +283,18 @@ def _sequencer_ops(e):
             t = e.tracks[ti]
             x = slot * col_w
             c = track_color(t["color"])
-            note = note_name(t["_last_note"]) if t["_last_note"] is not None else "-"
-            ops.append(_text(x + 8, NOTE_BASELINE, note, c, 3))
+            playing = sounding_note(t, now)
+            if playing is not None:
+                ops.append(_text(x + 8, NOTE_BASELINE, note_name(playing), c, 3))
+            enc = layouts.slen_encoder(e, slot)
+            cx = enc * (W // 8) + (W // 16)
+            ops += _gauge(cx, SLEN_Y, c, t["length"], 1, eng.STEPS)
+            active = shown == enc
+            text = str(t["length"]) if active else "S LEN"
+            tx = cx - CHAR_W * len(text) // 2
+            ops.append(_text(tx, SLEN_Y + KNOB_R + 13, text, c))
+            if active:
+                ops.append(_rect(tx, SLEN_Y + KNOB_R + 16, CHAR_W * len(text), 1, c))
             ops += _bar(x + 8, MAIN_BAR_Y, col_w - 24, c, t["_progress"])
             ops += _strip_cell(e, ti, x, col_w)
         return ops
@@ -290,8 +309,16 @@ def _sequencer_ops(e):
         ops.append(_text(rate_x, LABEL_BASELINE, rate_label(t), white if hot else color("gray_mid")))
 
         s = display_step(e, ti)
-        ops.append(_text(x + 8, 66, note_name(s["pitch"]), c, 3))
-        ops.append(_text(x + 8, 80, "PITCH", c))
+        # The edited track shows the pitch of its selected step when that step plays.
+        # Other tracks show the note they are sounding. Nothing else.
+        if hot:
+            pitch = s["pitch"] if s["on"] else None
+        else:
+            pitch = sounding_note(t, now)
+        if pitch is not None:
+            ops.append(_text(x + 8, 66, note_name(pitch), c, 3))
+        if hot or pitch is not None:
+            ops.append(_text(x + 8, 80, "PITCH", c))
         if hot and shown == 0:
             ops.append(_rect(x + 8, 84, CHAR_W * 5, 2, c))
         spacing = (col_w - 132) // 3

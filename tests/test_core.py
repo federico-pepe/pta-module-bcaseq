@@ -428,6 +428,140 @@ class PitchFlashTest(unittest.TestCase):
         self.assertGreaterEqual(t["_lit_until"] - (e.play_start + 0.001), eng.FLASH_MIN_S - 1e-6)
 
 
+class NoteLengthTest(unittest.TestCase):
+    def test_note_length_holds_the_note(self):
+        e, notes = make()
+        layouts.pad_press(e, 0, 7)                    # step 0 on and selected
+        e.nudge(7, 8)                                 # N LEN +2 (friction 4)
+        self.assertEqual(e.tracks[0]["steps"][0]["len"], 3)
+        self.assertEqual(e.tracks[0]["length"], 16)   # the sequence length is not touched
+        e.start()
+        t0, dur = e.play_start, e.step_duration(e.tracks[0])
+        e.tick(t0 + 0.001)
+        e.tick(t0 + dur * 2.4)                        # 2 steps + half a gate = 2.5 steps
+        self.assertFalse(any(n[0] == "off" for n in notes))
+        e.tick(t0 + dur * 2.6)
+        self.assertTrue(any(n[0] == "off" for n in notes))
+
+    def test_default_length_one_ends_in_the_first_step(self):
+        e, notes = make()
+        layouts.pad_press(e, 0, 7)
+        e.start()
+        t0, dur = e.play_start, e.step_duration(e.tracks[0])
+        e.tick(t0 + 0.001)
+        e.tick(t0 + dur * 0.6)
+        self.assertTrue(any(n[0] == "off" for n in notes))
+
+    def test_reset_and_persist(self):
+        e, _ = make()
+        layouts.pad_press(e, 0, 7)
+        e.nudge(7, 12)
+        e2, _ = make()
+        self.assertTrue(e2.load(e.to_doc()))
+        self.assertEqual(e2.tracks[0]["steps"][0]["len"], 4)
+        e.reset_param(7)
+        self.assertEqual(e.tracks[0]["steps"][0]["len"], 1)
+
+    def test_old_file_without_len_loads(self):
+        e, _ = make()
+        doc = e.to_doc()
+        for t in doc["pattern"]["tracks"]:
+            for st in t["steps"]:
+                st.pop("len", None)
+        e2, _ = make()
+        self.assertTrue(e2.load(doc))
+        self.assertEqual(e2.tracks[0]["steps"][0]["len"], 1)
+
+
+class SequenceLengthKnobTest(unittest.TestCase):
+    def test_second_encoder_of_each_track(self):
+        e, _ = make()
+        self.assertEqual([layouts.slen_track(e, i) for i in range(8)],
+                         [None, 0, None, 1, None, 2, None, 3])
+        layouts.switch_layout(e, 1)
+        self.assertEqual([layouts.slen_track(e, i) for i in range(8)],
+                         [None, 0, None, None, None, 1, None, None])
+        self.assertEqual(layouts.slen_encoder(e, 1), 5)
+
+    def test_knob_changes_sequence_length(self):
+        e, _ = make()
+        e.nudge_track_length(1, -8, 3)                # friction 4: -2 steps
+        self.assertEqual(e.tracks[1]["length"], 14)
+        self.assertEqual(e.tracks[0]["length"], 16)
+        e.nudge_track_length(1, -400, 3)
+        self.assertEqual(e.tracks[1]["length"], 1)
+        e.reset_track_length(1, 3)
+        self.assertEqual(e.tracks[1]["length"], 16)
+        self.assertEqual(e.active_param[0], 3)
+
+    def test_main_view_draws_the_knob_and_edit_view_has_none(self):
+        class S:
+            pass
+        st = S()
+        st.engine, _ = make()
+        st.button_held, st.browser_active, st.browser_names, st.browser_cursor = {}, False, [], 0
+        st.popup_title = st.popup_body = None
+        st.popup_until = 0
+        ops = view.draw(st)["ops"]
+        self.assertEqual(sum(1 for o in ops if o["kind"] == "knobarc"), 4)
+        texts = [o["params"]["s"] for o in ops if o["kind"] == "text"]
+        self.assertEqual(texts.count("S LEN"), 4)
+        layouts.pad_press(st.engine, 0, 7)
+        texts = [o["params"]["s"] for o in view.draw(st)["ops"] if o["kind"] == "text"]
+        self.assertNotIn("S LEN", texts)
+        self.assertIn("N LEN", texts)
+
+
+class PitchDisplayTest(unittest.TestCase):
+    def setUp(self):
+        class S:
+            pass
+        self.st = S()
+        self.st.engine, _ = make()
+        self.e = self.st.engine
+        self.st.button_held, self.st.browser_active, self.st.browser_names, self.st.browser_cursor = {}, False, [], 0
+        self.st.popup_title = self.st.popup_body = None
+        self.st.popup_until = 0
+
+    def big_notes(self):
+        return [o["params"]["s"] for o in view.draw(self.st)["ops"]
+                if o["kind"] == "text" and o["params"].get("scale") == 3]
+
+    def test_main_shows_no_pitch_until_a_note_plays(self):
+        import time as _t
+        self.assertEqual(self.big_notes(), [])
+        t = self.e.tracks[0]
+        t["_lit_note"], t["_show_until"] = 64, _t.monotonic() + 5
+        self.assertEqual(self.big_notes(), ["E3"])
+        t["_show_until"] = _t.monotonic() - 1                    # note ended
+        self.assertEqual(self.big_notes(), [])
+        self.e.tracks[0]["_last_note"] = 64                      # the old 'last note' never shows
+        self.assertEqual(self.big_notes(), [])
+
+    def test_stop_clears_the_pitch(self):
+        import time as _t
+        t = self.e.tracks[0]
+        t["_lit_note"], t["_show_until"] = 64, _t.monotonic() + 5
+        self.e.stop()
+        self.assertEqual(self.big_notes(), [])
+
+    def test_edit_view_hides_pitch_of_a_step_that_is_off(self):
+        self.e.shift = True
+        layouts.pad_press(self.e, 0, 7)                           # select only: step stays off
+        self.assertEqual(self.big_notes(), [])
+        self.e.shift = False
+        layouts.pad_press(self.e, 1, 7)                           # tap: step on and selected
+        self.assertEqual(self.big_notes(), ["C3"])
+
+    def test_edit_view_other_tracks_show_only_sounding_notes(self):
+        import time as _t
+        layouts.pad_press(self.e, 0, 7)
+        self.assertEqual(self.big_notes(), ["C3"])
+        t = self.e.tracks[1]
+        t["_lit_note"], t["_show_until"] = 67, _t.monotonic() + 5
+        self.assertEqual(sorted(self.big_notes()), ["C3", "G3"])
+
+
 class DefaultsAndButtonsTest(unittest.TestCase):
     def test_default_key_is_c_chromatic(self):
         e, _ = make(scale=None)

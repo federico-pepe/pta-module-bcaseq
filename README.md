@@ -16,7 +16,7 @@ sequencer shows on the pads and screen. The functions stay the same.
 
 ### Layout 1
 Four 4x4 quadrants, one track each. Empty steps are a dim version of the track color. Steps that are on use the full track color. The selected step is white. The playhead is green. Steps run left to right, then down. Tap a pad to toggle a step
-and edit it. Shift + pad selects without toggling. Edit encoders 1-8: Pitch (big), then gauge knobs for VEL, GATE, PROB, OFF, MIDI, REP, LEN. All tracks stay visible. The edited track is white with corners. When you touch or turn a knob, its value replaces the name under it. Delete + touch resets a parameter.
+and edit it. Shift + pad selects without toggling. Edit encoders 1-8: Pitch (big), then gauge knobs for VEL, GATE, PROB, OFF, MIDI, REP, N LEN. N LEN is the length of the selected note in steps. The note holds for that many steps, and later steps can still trigger. All tracks stay visible. The edited track is white with corners. When you touch or turn a knob, its value replaces the name under it. Delete + touch resets a parameter.
 
 ### Layout 2
 Two tracks (left quadrants). The right quadrants pick the pitch of the selected step of the track
@@ -25,7 +25,7 @@ on the same row. Octave Up/Down moves the range and shows it on screen. When a t
 Each track remembers the last note you entered, with a pitch pad or the Pitch encoder. A new step starts from that note. A step that already has a note keeps it when you turn it off and on.
 
 ### Main screen
-BPM and scale are at the top. Each track shows the last note played and a bar for its position in the loop. Track names and rates are at the bottom, above the Screen-bottom buttons. The selected track is a filled block.
+Each track has an S LEN knob (the second encoder of its column) that sets the length of its sequence. A pitch shows only while its note plays. BPM and scale are at the top. Each track shows the last note played and a bar for its position in the loop. Track names and rates are at the bottom, above the Screen-bottom buttons. The selected track is a filled block.
 
 ### Colors
 Track colors use the hardware palette for the pads and measured screen colors for the screen

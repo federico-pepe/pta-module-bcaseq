@@ -104,6 +104,25 @@ def pitch_track_for_slot(e, slot):
     return idx if idx < len(e.tracks) else None
 
 
+def editing(e):
+    """True when the screen shows the edit view: a step of a track on this page is selected."""
+    es = e.edit_step()
+    return es is not None and es[0] in page_tracks(e)
+
+
+def slen_track(e, enc_idx):
+    """Main screen: each track owns 8 / tracks_per_page encoders. The second one
+    is its S LEN knob. Returns the track index for that encoder, else None."""
+    per = 8 // current(e).tracks_per_page
+    slot, role = divmod(enc_idx, per)
+    page = page_tracks(e)
+    return page[slot] if role == 1 and slot < len(page) else None
+
+
+def slen_encoder(e, slot):
+    return slot * (8 // current(e).tracks_per_page) + 1
+
+
 def pitch_ref_track(e):
     """Track whose pitch grid the octave OSD describes: the last touched track
     if it is on the page, else the first track on the page."""

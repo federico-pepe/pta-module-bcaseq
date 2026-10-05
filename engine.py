@@ -66,15 +66,19 @@ SCALE_LABELS = {
 TRACK_COLORS = [1, 2, 3, 4, 6, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 26, 25]
 TRACK_COLOR_STEP = 3  # coprime with len(TRACK_COLORS)
 
-# Encoder index -> step parameter. "channel" and "length" belong to the track.
-PARAMS = ["pitch", "velocity", "gate", "probability", "offset", "channel", "repeat", "length"]
-THROTTLED = ("pitch", "offset", "channel", "repeat", "length")
+# Encoder index -> step parameter. "channel" belongs to the track. "note_length" is
+# how many steps the note lasts. The length of the sequence is set on the main
+# screen (nudge_track_length).
+PARAMS = ["pitch", "velocity", "gate", "probability", "offset", "channel", "repeat", "note_length"]
+STEP_FIELD = {"velocity": "vel", "probability": "prob", "note_length": "len"}
+THROTTLED = ("pitch", "offset", "channel", "repeat", "note_length")
 PARAM_RANGE = {
     "velocity": (1, 127), "gate": (2, 99), "probability": (0, 100),
     "offset": (-45, 45), "repeat": (1, MAX_REPEAT), "pitch": (0, 127),
-    "channel": (1, 16), "length": (1, STEPS),
+    "channel": (1, 16), "note_length": (1, STEPS),
 }
-PARAM_DEFAULT = {"velocity": 100, "gate": 50, "probability": 100, "offset": 0, "repeat": 1}
+PARAM_DEFAULT = {"velocity": 100, "gate": 50, "probability": 100, "offset": 0, "repeat": 1,
+                 "note_length": 1}
 
 DEFAULT_VELOCITY, ACCENT_VELOCITY = 100, 127
 DEFAULT_PITCH = 60  # C3 in Live numbering
@@ -117,7 +121,7 @@ class Friction:
 
 def new_step():
     return {"on": False, "pitch": DEFAULT_PITCH, "pitch_set": False, "vel": DEFAULT_VELOCITY,
-            "gate": 50, "prob": 100, "offset": 0, "repeat": 1}
+            "gate": 50, "prob": 100, "offset": 0, "repeat": 1, "len": 1}
 
 
 def new_track(index):
@@ -135,6 +139,7 @@ def new_track(index):
         "_last_note": None,
         "_lit_note": None,      # note that just sounded, for the pitch pad flash
         "_lit_until": 0.0,
+        "_show_until": 0.0,     # the screen shows _lit_note until this time
         "_progress": 0.0,       # 0-1 position inside the track's loop
         "_ext_acc": 0,
     }
@@ -337,6 +342,8 @@ class Engine:
             for j in range(STEPS):
                 if j < len(saved_steps) and isinstance(saved_steps[j], dict):
                     t["steps"][j].update({k: v for k, v in saved_steps[j].items() if k in t["steps"][j]})
+                    st = t["steps"][j]
+                    st["len"] = max(1, min(STEPS, int(st["len"]))) if isinstance(st["len"], int) else 1
                     if "pitch_set" not in saved_steps[j]:   # older file: a moved pitch counts as set
                         t["steps"][j]["pitch_set"] = t["steps"][j]["pitch"] != DEFAULT_PITCH
             tracks.append(t)
@@ -437,12 +444,24 @@ class Engine:
             self._remember_pitch(ti, s)
         elif param == "channel":
             t["channel"] = max(lo, min(hi, t["channel"] + n))
-        elif param == "length":
-            t["length"] = max(lo, min(hi, t["length"] + n))
         else:
-            field = {"velocity": "vel", "probability": "prob"}.get(param, param)
+            field = STEP_FIELD.get(param, param)
             s[field] = max(lo, min(hi, s[field] + n))
         return True
+
+    def nudge_track_length(self, track_idx, delta, enc_idx):
+        """Main screen S LEN knob: length of the sequence of one track."""
+        if not (0 <= track_idx < len(self.tracks)) or delta == 0:
+            return
+        self.touch_param(enc_idx)
+        n = self.friction.feed(("slen", track_idx), delta)
+        t = self.tracks[track_idx]
+        t["length"] = max(1, min(STEPS, t["length"] + n))
+
+    def reset_track_length(self, track_idx, enc_idx):
+        if 0 <= track_idx < len(self.tracks):
+            self.touch_param(enc_idx)
+            self.tracks[track_idx]["length"] = STEPS
 
     def reset_param(self, idx):
         es = self.edit_step()
@@ -454,11 +473,8 @@ class Engine:
             s["pitch"] = self.default_pitch(ti)
         elif param == "channel":
             t["channel"] = 1
-        elif param == "length":
-            t["length"] = STEPS
         else:
-            field = {"velocity": "vel", "probability": "prob"}.get(param, param)
-            s[field] = PARAM_DEFAULT[param]
+            s[STEP_FIELD.get(param, param)] = PARAM_DEFAULT[param]
 
     # Scale menu encoders: 1 Key, 2 Scale, 4 In Key, 5 Scope. Encoder 3 is unused
     # because the Scale name needs two screen columns.
@@ -521,6 +537,8 @@ class Engine:
         for t in self.tracks:
             t["_current_step"] = -1
             t["_progress"] = 0.0
+            t["_lit_note"] = None
+            t["_show_until"] = 0.0
 
     def is_externally_synced(self):
         return self.last_ext_clock is not None and \
@@ -582,10 +600,13 @@ class Engine:
         for r in range(repeats):
             fire_at = now + (s["offset"] / 100.0) * dur + r * slot
             off_at = fire_at + (s["gate"] / 100.0) * slot
+            if r == repeats - 1:
+                off_at += (s["len"] - 1) * dur     # note length: the last hit holds longer
             self._schedule(t["channel"], s["pitch"], s["vel"], fire_at, off_at, now)
         t["_last_note"] = s["pitch"]
         t["_lit_note"] = s["pitch"]
         t["_lit_until"] = max(off_at, now + FLASH_MIN_S)
+        t["_show_until"] = max(off_at, now + dur)
 
     def _schedule(self, ch, note, vel, fire_at, off_at, now):
         if fire_at <= now + 0.001:
