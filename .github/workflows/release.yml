@@ -1,0 +1,23 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        run: python3 -m unittest discover -s tests
+      - name: Check tag matches manifest
+        run: |
+          v=$(python3 -c "import json;print(json.load(open('manifest.json'))['version'])")
+          [ "v$v" = "${GITHUB_REF_NAME%%-*}" ] || { echo "tag $GITHUB_REF_NAME does not match manifest $v"; exit 1; }
+      - name: Package
+        run: tar -czf bcaseq.tar.gz manifest.json run.py engine.py layouts.py view.py palette.json README.md
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: bcaseq.tar.gz
+          generate_release_notes: true
