@@ -58,6 +58,7 @@ SCALE_LABELS = {
     "half_whole_dim": "Half-Whole Dim",
     "whole_half_dim": "Whole-Half Dim",
     "dorian_sharp4": "Dorian #4",
+    "phrygian_dominant": "Phrygian Dom",
 }
 
 # Same hand-picked list as gridseq. Do not reorder without a hardware test.
@@ -120,6 +121,8 @@ def new_step():
 def new_track(index):
     return {
         "name": "Track %d" % (index + 1),
+        "root": 0,              # used when pattern["scope_global"] is False
+        "scale": "major",
         "channel": 1,
         "length": STEPS,
         "rate": DEFAULT_RATE,
@@ -136,6 +139,7 @@ def default_pattern():
     return {
         "bpm": DEFAULT_BPM,
         "root": 0, "scale": "major", "in_key": True,
+        "scope_global": True,   # True: one key/scale for all tracks. False: each track has its own.
         "tracks": [new_track(i) for i in range(DEFAULT_TRACK_COUNT)],
     }
 
@@ -268,8 +272,29 @@ class Engine:
         self.tracks.append(new_track(len(self.tracks)))
         return True
 
-    def default_pitch(self):
-        return DEFAULT_PITCH + self.pattern["root"]
+    def key_of(self, track_idx):
+        """(root, scale) that applies to a track."""
+        p = self.pattern
+        if p["scope_global"] or not (0 <= track_idx < len(self.tracks)):
+            return p["root"], p["scale"]
+        t = self.tracks[track_idx]
+        return t["root"], t["scale"]
+
+    def menu_track(self):
+        """Track the Scale menu edits: the last touched track, or None when global."""
+        if self.pattern["scope_global"]:
+            return None
+        return min(self.rate_track, len(self.tracks) - 1)
+
+    def default_pitch(self, track_idx=0):
+        return DEFAULT_PITCH + self.key_of(track_idx)[0]
+
+    def max_octave(self):
+        """Highest Layout 2 octave that keeps every pitch pad at or below 127."""
+        p = self.pattern
+        if p["scope_global"]:
+            return max_octave(p["root"], p["scale"], p["in_key"])
+        return min(max_octave(t["root"], t["scale"], p["in_key"]) for t in self.tracks)
 
     # -- persistence -----------------------------------------------------------
 
@@ -286,6 +311,7 @@ class Engine:
         if pat.get("scale") in SCALES:
             out["scale"] = pat["scale"]
         out["in_key"] = bool(pat.get("in_key", True))
+        out["scope_global"] = bool(pat.get("scope_global", True))
         tracks = []
         for i, saved in enumerate((pat.get("tracks") or [])[:MAX_TRACKS]):
             if not isinstance(saved, dict):
@@ -294,6 +320,8 @@ class Engine:
             for k in ("name", "color"):
                 if k in saved:
                     t[k] = saved[k]
+            t["root"] = max(0, min(11, int(saved.get("root", out["root"]))))
+            t["scale"] = saved["scale"] if saved.get("scale") in SCALES else out["scale"]
             t["channel"] = max(1, min(16, int(saved.get("channel", 1))))
             t["length"] = max(1, min(STEPS, int(saved.get("length", STEPS))))
             r = saved.get("rate", legacy_rate)
@@ -319,7 +347,7 @@ class Engine:
         tracks = [{k: v for k, v in t.items() if not k.startswith("_")} for t in p["tracks"]]
         return {"version": 1, "pattern": {
             "bpm": p["bpm"], "root": p["root"], "scale": p["scale"],
-            "in_key": p["in_key"], "tracks": tracks}}
+            "in_key": p["in_key"], "scope_global": p["scope_global"], "tracks": tracks}}
 
     # -- step editing ----------------------------------------------------------
 
@@ -331,7 +359,7 @@ class Engine:
         s = t["steps"][step_idx]
         s["on"] = not s["on"]
         if s["on"]:
-            s["pitch"] = s["pitch"] if s["pitch"] != DEFAULT_PITCH else self.default_pitch()
+            s["pitch"] = s["pitch"] if s["pitch"] != DEFAULT_PITCH else self.default_pitch(track_idx)
             s["vel"] = ACCENT_VELOCITY if self.accent_on else DEFAULT_VELOCITY
             s["repeat"] = self.repeat_count if self.repeat_on else 1
             self.select_step(track_idx, step_idx)
@@ -354,11 +382,11 @@ class Engine:
     def set_pitch(self, track_idx, step_idx, note):
         self.tracks[track_idx]["steps"][step_idx]["pitch"] = max(0, min(127, note))
 
-    def _step_pitch(self, note, direction):
+    def _step_pitch(self, note, direction, track_idx=0):
         """One pitch step: next scale note when In Key is on, else a semitone."""
         if not self.pattern["in_key"]:
             return max(0, min(127, note + direction))
-        pcs = set(scale_notes(self.pattern["root"], self.pattern["scale"]))
+        pcs = set(scale_notes(*self.key_of(track_idx)))
         n = note
         while 0 <= n + direction <= 127:
             n += direction
@@ -383,7 +411,7 @@ class Engine:
         lo, hi = PARAM_RANGE[param]
         if param == "pitch":
             for _ in range(abs(n)):
-                s["pitch"] = self._step_pitch(s["pitch"], 1 if n > 0 else -1)
+                s["pitch"] = self._step_pitch(s["pitch"], 1 if n > 0 else -1, ti)
         elif param == "channel":
             t["channel"] = max(lo, min(hi, t["channel"] + n))
         elif param == "length":
@@ -400,7 +428,7 @@ class Engine:
         ti, si = es
         t, s, param = self.tracks[ti], self.tracks[ti]["steps"][es[1]], PARAMS[idx]
         if param == "pitch":
-            s["pitch"] = self.default_pitch()
+            s["pitch"] = self.default_pitch(ti)
         elif param == "channel":
             t["channel"] = 1
         elif param == "length":
@@ -409,31 +437,47 @@ class Engine:
             field = {"velocity": "vel", "probability": "prob"}.get(param, param)
             s[field] = PARAM_DEFAULT[param]
 
+    # Scale menu encoders: 1 Key, 2 Scale, 4 In Key, 5 Scope. Encoder 3 is unused
+    # because the Scale name needs two screen columns.
     def nudge_scale_menu(self, idx, delta):
         p = self.pattern
         if delta == 0:
             return
+        target = p if p["scope_global"] else self.tracks[self.menu_track()]
         if idx == 0:
             n = self.friction.feed("root", delta)
-            p["root"] = max(0, min(11, p["root"] + n))
+            target["root"] = max(0, min(11, target["root"] + n))
         elif idx == 1:
             n = self.friction.feed("scale", delta)
-            i = SCALE_NAMES.index(p["scale"])
-            p["scale"] = SCALE_NAMES[max(0, min(len(SCALE_NAMES) - 1, i + n))]
-        elif idx == 2:
+            i = SCALE_NAMES.index(target["scale"])
+            target["scale"] = SCALE_NAMES[max(0, min(len(SCALE_NAMES) - 1, i + n))]
+        elif idx == 3:
             n = self.friction.feed("in_key", delta)
             if n:
                 p["in_key"] = n > 0
-        self.octave = min(self.octave, max_octave(p["root"], p["scale"], p["in_key"]))
+        elif idx == 4:
+            n = self.friction.feed("scope", delta)
+            if n:
+                self.set_scope_global(n > 0)
+        self.octave = min(self.octave, self.max_octave())
+
+    def set_scope_global(self, on):
+        """Global: all tracks share the pattern key. Per track: each track keeps
+        its own, starting from the current global key."""
+        p = self.pattern
+        if on == p["scope_global"]:
+            return
+        p["scope_global"] = on
+        if not on:
+            for t in self.tracks:
+                t["root"], t["scale"] = p["root"], p["scale"]
 
     def toggle_scale_menu(self):
         self.scale_menu = not self.scale_menu
         self.friction.reset()
 
     def shift_octave(self, direction):
-        p = self.pattern
-        top = max_octave(p["root"], p["scale"], p["in_key"])
-        self.octave = max(-2, min(top, self.octave + direction))
+        self.octave = max(-2, min(self.max_octave(), self.octave + direction))
 
     # -- transport -------------------------------------------------------------
 

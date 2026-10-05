@@ -102,6 +102,13 @@ def pitch_track_for_slot(e, slot):
     return idx if idx < len(e.tracks) else None
 
 
+def pitch_ref_track(e):
+    """Track whose pitch grid the octave OSD describes: the last touched track
+    if it is on the page, else the first track on the page."""
+    page = page_tracks(e)
+    return e.rate_track if e.rate_track in page else (page[0] if page else 0)
+
+
 def pad_press(e, col, row):
     """Handle a pad press. Shift selects without toggling."""
     if e.color_picker_track is not None:
@@ -130,8 +137,8 @@ def pad_press(e, col, row):
         si = e.sel.get(pt)
         if si is None:
             return
-        p = e.pattern
-        notes = eng.grid_pitches(p["root"], p["scale"], p["in_key"], e.octave)
+        root, scale = e.key_of(pt)
+        notes = eng.grid_pitches(root, scale, e.pattern["in_key"], e.octave)
         note = notes[pitch_index(col, row)]
         if note <= 127:
             e.set_pitch(pt, si, note)
@@ -172,9 +179,10 @@ def pad_colors(e):
 
 
 def _paint_pitch(e, grid, slot, track_idx):
-    p = e.pattern
-    notes = eng.grid_pitches(p["root"], p["scale"], p["in_key"], e.octave)
-    in_scale = set(eng.scale_notes(p["root"], p["scale"]))
+    in_key = e.pattern["in_key"]
+    root, scale = e.key_of(track_idx)
+    notes = eng.grid_pitches(root, scale, in_key, e.octave)
+    in_scale = set(eng.scale_notes(root, scale))
     color = e.tracks[track_idx]["color"]
     col0 = 0 if slot in (0, 2) else 4
     row0 = 4 if slot in (0, 1) else 0
@@ -182,9 +190,9 @@ def _paint_pitch(e, grid, slot, track_idx):
         c, r = col0 + i % 4, row0 + i // 4
         if note > 127:
             grid[r][c] = OFF
-        elif note % 12 == p["root"]:
+        elif note % 12 == root:
             grid[r][c] = color
-        elif p["in_key"] or note % 12 in in_scale:
+        elif in_key or note % 12 in in_scale:
             grid[r][c] = PITCH_WHITE
         else:
             grid[r][c] = OFF

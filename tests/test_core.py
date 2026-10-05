@@ -270,6 +270,90 @@ class ColorTableTest(unittest.TestCase):
             self.assertFalse(colortable.load(p))
 
 
+class ScopeTest(unittest.TestCase):
+    def test_default_is_global(self):
+        e, _ = make()
+        e.nudge_scale_menu(0, 8)                      # Key +2 (friction 4)
+        self.assertEqual(e.key_of(0), (2, "major"))
+        self.assertEqual(e.key_of(3), (2, "major"))
+
+    def test_per_track_keys(self):
+        e, _ = make()
+        e.nudge_scale_menu(0, 4)                      # global C# (root 1)
+        e.nudge_scale_menu(4, -4)                     # Scope -> Track: tracks copy the global key
+        self.assertFalse(e.pattern["scope_global"])
+        self.assertEqual(e.key_of(2), (1, "major"))
+        e.rate_track = 2                              # menu now edits track 3
+        e.nudge_scale_menu(0, 8)
+        e.nudge_scale_menu(1, 4)                      # next scale
+        self.assertEqual(e.key_of(2), (3, "minor"))
+        self.assertEqual(e.key_of(0), (1, "major"))   # other tracks unchanged
+        e.nudge_scale_menu(4, 4)                      # back to Global: pattern key is used
+        self.assertEqual(e.key_of(2), (1, "major"))
+
+    def test_pitch_pads_use_track_key(self):
+        e, _ = make()
+        e.layout = 1
+        e.nudge_scale_menu(4, -4)
+        e.tracks[1]["root"] = 7                       # track 2 in G
+        layouts.pad_press(e, 0, 7)                    # select track 1 step 0
+        layouts.pad_press(e, 0, 3)                    # track 2 step 0 (BL quadrant)
+        grid = layouts.pad_colors(e)
+        self.assertEqual(grid[0][4], e.tracks[1]["color"])    # BR pitch grid: root pad is G, track color
+        layouts.pad_press(e, 4, 0)                    # lowest pad of BR grid -> G3
+        self.assertEqual(e.tracks[1]["steps"][0]["pitch"] % 12, 7)
+
+    def test_pitch_nudge_uses_track_scale(self):
+        e, _ = make()
+        e.nudge_scale_menu(4, -4)
+        e.tracks[0]["scale"] = "minor"
+        layouts.pad_press(e, 0, 7)
+        e.nudge(0, 8)                                 # two scale steps up from C in C minor
+        self.assertEqual(e.tracks[0]["steps"][0]["pitch"], 63)
+
+    def test_persist_scope(self):
+        e, _ = make()
+        e.nudge_scale_menu(4, -4)
+        e.tracks[1]["root"], e.tracks[1]["scale"] = 5, "dorian"
+        e2, _ = make()
+        self.assertTrue(e2.load(e.to_doc()))
+        self.assertFalse(e2.pattern["scope_global"])
+        self.assertEqual(e2.key_of(1), (5, "dorian"))
+
+    def test_old_file_without_scope_loads_global(self):
+        e, _ = make()
+        doc = e.to_doc()
+        del doc["pattern"]["scope_global"]
+        for t in doc["pattern"]["tracks"]:
+            t.pop("root", None)
+            t.pop("scale", None)
+        e2, _ = make()
+        self.assertTrue(e2.load(doc))
+        self.assertTrue(e2.pattern["scope_global"])
+
+
+class ScaleMenuLayoutTest(unittest.TestCase):
+    def test_no_scale_name_reaches_the_next_cell(self):
+        e, _ = make()
+        in_key_x = view.SCALE_MENU_COL["In Key"] * (view.W // 8) + 4
+        scale_x = view.SCALE_MENU_COL["Scale"] * (view.W // 8) + 4
+        for name in eng.SCALE_NAMES:
+            e.pattern["scale"] = name
+            ops = view._scale_ops(e, view.color("white"))
+            value = [o for o in ops if o["params"].get("scale") == view.VALUE_SCALE
+                     and o["params"]["x"] == scale_x][0]["params"]["s"]
+            end = scale_x + view.CHAR_W * view.VALUE_SCALE * len(value)
+            self.assertLess(end, in_key_x - 8, "%s ends at %d, In Key starts at %d" % (value, end, in_key_x))
+
+    def test_menu_draws_in_both_scopes(self):
+        e, _ = make()
+        e.scale_menu = True
+        for glob in (True, False):
+            e.pattern["scope_global"] = glob
+            self.assertTrue(view._scale_ops(e, view.color("white")))
+            self.assertIn("BPM", view._status_line(e))
+
+
 class HoldTest(unittest.TestCase):
     def test_accent_hold_edits_without_toggling(self):
         e, _ = make()
