@@ -114,8 +114,8 @@ def handle_pad(state, data):
 
 
 def octave_range_label(e):
-    p = e.pattern
-    notes = [n for n in eng.grid_pitches(p["root"], p["scale"], p["in_key"], e.octave) if n <= 127]
+    root, scale = e.key_of(layouts.pitch_ref_track(e))
+    notes = [n for n in eng.grid_pitches(root, scale, e.pattern["in_key"], e.octave) if n <= 127]
     return "%s - %s" % (view.note_name(min(notes)), view.note_name(max(notes)))
 
 

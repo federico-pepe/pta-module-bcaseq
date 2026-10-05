@@ -169,15 +169,25 @@ def draw(state):
     return {"ops": ops, "failed": 0}
 
 
+# Scale menu cells by encoder column. Scale takes columns 2 and 3, so the longest
+# name ("Phrygian Dominant", 17 characters at 2x) fits before In Key.
+SCALE_MENU_COL = {"Key": 0, "Scale": 1, "In Key": 3, "Scope": 4}
+
+
 def _scale_ops(e, white):
     p = e.pattern
-    cells = [("Key", NOTE_NAMES[p["root"]]),
-             ("Scale", scale_label(p["scale"])),
-             ("In Key", "On" if p["in_key"] else "Off")]
+    mt = e.menu_track()
+    c = white if mt is None else track_color(e.tracks[mt]["color"])
+    root, scale = e.key_of(mt if mt is not None else 0)
+    cells = [("Key", NOTE_NAMES[root]), ("Scale", scale_label(scale)),
+             ("In Key", "On" if p["in_key"] else "Off"),
+             ("Scope", "Global" if p["scope_global"] else "Track")]
     ops = []
-    for i, (label, value) in enumerate(cells):
-        x = i * (W // 8) + 4
-        ops += [_text(x, LABEL_BASELINE, label, white), _text(x, VALUE_BASELINE, value, white, VALUE_SCALE)]
+    for label, value in cells:
+        x = SCALE_MENU_COL[label] * (W // 8) + 4
+        ops += [_text(x, LABEL_BASELINE, label, c), _text(x, VALUE_BASELINE, value, c, VALUE_SCALE)]
+    target = "All tracks" if mt is None else e.tracks[mt]["name"]
+    ops.append(_text(4, 100, "Key and scale for: " + target, c))
     return ops
 
 
@@ -320,9 +330,9 @@ def _strip_cell(e, ti, x, col_w):
 
 def _status_line(e):
     p = e.pattern
-    return "%d BPM   %s %s   %s" % (
-        p["bpm"], NOTE_NAMES[p["root"]], scale_label(p["scale"]),
-        "In Key" if p["in_key"] else "Chromatic")
+    key = ("%s %s" % (NOTE_NAMES[p["root"]], scale_label(p["scale"]))
+           if p["scope_global"] else "Key per track")
+    return "%d BPM   %s   %s" % (p["bpm"], key, "In Key" if p["in_key"] else "Chromatic")
 
 
 def _browser_ops(state, black, white):

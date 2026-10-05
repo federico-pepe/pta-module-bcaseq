@@ -24,6 +24,6 @@ sequencer with switchable pad Layouts. Built from `pta-module-gridseq`.
 
 ## Open questions for hardware
 - Empty step pad color (124, dgray) and playhead green (126) need a look on the device.
-- Scale root, scale and In Key are global (gridseq had them per track).
+- Key and scale are global by default (`pattern["scope_global"]`). With Scope = Track each track has its own `root` and `scale`. Always use `engine.key_of(track)`. In Key is always global.
 - Rate is per track. Scene buttons act on `engine.rate_track` (last touched track).
 - Knobs are drawn with the host `arc` op (ring plus sweep). Check size and color on the device.

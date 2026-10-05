@@ -11,7 +11,7 @@ sequencer shows on the pads and screen. The functions stay the same.
 - **Accent**: tap to toggle. When on, new steps get velocity 127. Hold it and press a pad to set that step to 127 without toggling the step (press again to undo).
 - **Repeat**: tap to toggle. When on, new steps get the chosen repeat count. Hold it and press a pad to set that step's repeat count without toggling the step. Scene buttons choose the count while Repeat is held or on.
 - **Screen-bottom buttons**: select a track (its Scene target). Shift + button: pick a track color with the border pads. Release Shift to leave the picker.
-- **Scale**: menu. Encoder 1 = key, 2 = scale, 3 = In Key on/off.
+- **Scale**: menu. Encoder 1 = key, 2 = scale, 4 = In Key on/off, 5 = Scope. Scope Global: all tracks share one key and scale. Scope Track: each track has its own, and the menu edits the last touched track (switching to Track copies the global key to every track). In Key is always global.
 - **Tempo wheel**: BPM. **Play**: start/stop. **Save / Set**: save and load sequences.
 
 ### Layout 1
