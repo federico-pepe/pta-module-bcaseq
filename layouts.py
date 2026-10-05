@@ -6,6 +6,8 @@ Each quadrant is 4x4. Slot 0 = top-left, 1 = top-right, 2 = bottom-left,
 3 = bottom-right.
 """
 
+import time
+
 import colortable
 import engine as eng
 
@@ -196,3 +198,9 @@ def _paint_pitch(e, grid, slot, track_idx):
             grid[r][c] = PITCH_WHITE
         else:
             grid[r][c] = OFF
+    # the pad of a note that just sounded flashes green
+    t = e.tracks[track_idx]
+    if t["_lit_note"] is not None and time.monotonic() < t["_lit_until"]:
+        for i, note in enumerate(notes):
+            if note == t["_lit_note"] and note <= 127:
+                grid[row0 + i // 4][col0 + i % 4] = PLAYHEAD
