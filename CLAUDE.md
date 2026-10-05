@@ -1,0 +1,28 @@
+# CLAUDE.md
+
+BCA Seq is a Python 3 (stdlib only) process module for `push-tethered-app`. It is a MIDI step
+sequencer with switchable pad Layouts. Built from `pta-module-gridseq`.
+
+@~/.claude/push-family.md
+
+## Files
+- `run.py`: only file that touches stdin/stdout. Dispatch, LED diff plus 1 s full resend, save/load.
+- `engine.py`: model, global rate, clock, triggers, `Friction` encoder helper. No I/O.
+- `layouts.py`: pad mapping and pad colors per Layout. A Layout never changes sequencer behavior.
+- `view.py`: screen ops, button colors, OSD popup. No state changes.
+- `palette.json`: copied from gridseq. Generated. Do not edit.
+- `plans/`: design plans, dated. Never delete.
+
+## Rules
+- Update README.md and this file when a control or behavior changes.
+- Screen text is ASCII only.
+- Hardware change: deploy, wait for the user to confirm on the device, then commit.
+- Do not commit or push unless asked. Land branches through a PR.
+- Test: `python3 -m unittest discover -s tests`.
+- Install: in `push-tethered-app`, `go run ./cmd/pushapp -install /path/to/this/repo`, then `-module bcaseq`.
+
+## Open questions for hardware
+- Empty step pad color (124, dgray) and playhead green (126) need a look on the device.
+- Scale root, scale and In Key are global (gridseq had them per track).
+- Rate is per track. Scene buttons act on `engine.rate_track` (last touched track).
+- Knobs are drawn with the host `arc` op (ring plus sweep). Check size and color on the device.
