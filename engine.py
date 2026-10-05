@@ -141,7 +141,6 @@ def new_track(index):
         "_lit_until": 0.0,
         "_show_until": 0.0,     # the screen shows _lit_note until this time
         "_progress": 0.0,       # 0-1 position inside the track's loop
-        "_ext_acc": 0,
     }
 
 
@@ -188,6 +187,8 @@ class Engine:
         self.pattern = default_pattern()
         self.playing = False
         self.play_start = None
+        self._ticks = 0.0               # shared clock: 24 ppqn ticks since Start. Every track reads it.
+        self._last_tick = None          # time of the last internal-clock update
         self.pending = []            # (due, kind, ch, note, vel) kind "on" or "off"
         self.friction = Friction()
 
@@ -279,7 +280,10 @@ class Engine:
     def add_track(self):
         if len(self.tracks) >= MAX_TRACKS:
             return False
-        self.tracks.append(new_track(len(self.tracks)))
+        t = new_track(len(self.tracks))
+        if self.playing:
+            t["_current_step"] = self.step_at(t)   # join the shared clock without a late hit
+        self.tracks.append(t)
         return True
 
     def key_of(self, track_idx):
@@ -526,10 +530,11 @@ class Engine:
     def start(self):
         self.playing = True
         self.play_start = time.monotonic()
+        self._last_tick = self.play_start
+        self._ticks = 0.0
         for t in self.tracks:
             t["_current_step"] = -1
             t["_progress"] = 0.0
-            t["_ext_acc"] = 0
 
     def stop(self):
         self.playing = False
@@ -544,20 +549,34 @@ class Engine:
         return self.last_ext_clock is not None and \
             (time.monotonic() - self.last_ext_clock) < EXTERNAL_CLOCK_TIMEOUT
 
+    @staticmethod
+    def ticks_per_step(t):
+        """Clock ticks in one step of a track. Whole number for all 8 rates."""
+        return max(1, round(TICKS_PER_QUARTER * DIVISIONS[t["rate"]]))
+
+    def step_at(self, t):
+        """Step a track is on at the shared clock position. Every track reads the
+        same clock, so equal lengths stay together, a new track joins in phase,
+        and a length change keeps the track on the shared timeline."""
+        return int(self._ticks / self.ticks_per_step(t) + 1e-6) % t["length"]
+
+    def _advance(self, now):
+        for idx, t in enumerate(self.tracks):
+            pos = self._ticks / self.ticks_per_step(t)
+            t["_progress"] = (pos % t["length"]) / t["length"]
+            step_idx = int(pos + 1e-6) % t["length"]
+            if step_idx != t["_current_step"]:
+                t["_current_step"] = step_idx
+                self._trigger(idx, step_idx, now)
+
     def on_external_clock_byte(self, b):
         now = time.monotonic()
         if b == 0xF8:
             self.last_ext_clock = now
             if not self.playing:
                 return
-            for idx, t in enumerate(self.tracks):
-                per_step = max(1, round(TICKS_PER_QUARTER * DIVISIONS[t["rate"]]))
-                t["_ext_acc"] += 1
-                if t["_ext_acc"] >= per_step:
-                    t["_ext_acc"] = 0
-                    t["_current_step"] = (t["_current_step"] + 1) % t["length"]
-                    self._trigger(idx, t["_current_step"], now)
-                t["_progress"] = (max(0, t["_current_step"]) + t["_ext_acc"] / per_step) / t["length"]
+            self._advance(now)          # the first tick after Start plays step 1
+            self._ticks += 1
         elif b == 0xFA:
             self.start()
         elif b == 0xFB:
@@ -569,20 +588,16 @@ class Engine:
         """Called on every draw. Advances steps (internal clock) and flushes notes."""
         now = now if now is not None else time.monotonic()
         self._flush(now)
+        last, self._last_tick = self._last_tick, now
         if self.is_externally_synced():
             self.play_start = now
             return
-        if not self.playing or self.play_start is None:
+        if not self.playing or last is None:
             return
-        elapsed = now - self.play_start
-        for idx, t in enumerate(self.tracks):
-            dur = self.step_duration(t)
-            pos = (elapsed / dur) % t["length"]
-            t["_progress"] = pos / t["length"]
-            step_idx = int(pos)
-            if step_idx != t["_current_step"]:
-                t["_current_step"] = step_idx
-                self._trigger(idx, step_idx, now)
+        # Internal clock: add the ticks since the last call. A tempo change only
+        # affects the future, so the tracks never jump.
+        self._ticks += max(0.0, now - last) * self.pattern["bpm"] / 60.0 * TICKS_PER_QUARTER
+        self._advance(now)
 
     # -- triggering ------------------------------------------------------------
 

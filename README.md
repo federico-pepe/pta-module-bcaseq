@@ -31,3 +31,13 @@ Each track has an S LEN knob (the second encoder of its column) that sets the le
 Track colors use the hardware palette for the pads and measured screen colors for the screen
 (`colortable.py`). To tune them on a Push, use the `colorlab-py` example module in
 `push-tethered-app`. Copy its `colors.json` next to `run.py`. This module reads it at start up.
+
+### Clock
+All tracks read one shared clock (24 ticks per quarter note, from the internal tempo or from
+external MIDI clock). A track step is the clock position divided by the length of a step at its
+rate, modulo its sequence length. So tracks with the same length and rate stay together, a new
+track joins in phase, and tracks with different rates share one beat grid. Tracks with different
+lengths loop against each other and meet again after the least common multiple of their lengths
+(for example 16 and 12 steps meet every 48 steps). When you change a length, the track jumps to
+the place it would be if it always had that length. The first clock tick after a MIDI Start plays
+step 1.

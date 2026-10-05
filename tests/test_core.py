@@ -428,6 +428,76 @@ class PitchFlashTest(unittest.TestCase):
         self.assertGreaterEqual(t["_lit_until"] - (e.play_start + 0.001), eng.FLASH_MIN_S - 1e-6)
 
 
+class SharedClockTest(unittest.TestCase):
+    def ext_ticks(self, e, n):
+        for _ in range(n):
+            e.on_external_clock_byte(0xF8)
+
+    def test_new_track_joins_in_phase_on_external_clock(self):
+        e, _ = make()
+        e.on_external_clock_byte(0xFA)
+        self.ext_ticks(e, 6 * 10 + 3)                 # 10 steps and a bit
+        e.add_track()
+        self.ext_ticks(e, 6 * 3)
+        steps = [t["_current_step"] for t in e.tracks]
+        self.assertEqual(len(set(steps)), 1, steps)
+        self.assertEqual(steps[0], 13)
+
+    def test_length_change_stays_on_the_shared_timeline(self):
+        e, _ = make()
+        e.on_external_clock_byte(0xFA)
+        self.ext_ticks(e, 6 * 20)
+        e.tracks[1]["length"] = 12
+        for k in range(1, 40):
+            self.ext_ticks(e, 6)
+            global_step = 20 + k - 1                  # step index of the tick just played
+            self.assertEqual(e.tracks[0]["_current_step"], global_step % 16)
+            self.assertEqual(e.tracks[1]["_current_step"], global_step % 12)
+
+    def test_different_rates_share_the_beat_grid(self):
+        e, _ = make()
+        e.set_rate(0, "Scene 1/8")                    # 12 ticks per step
+        e.set_rate(1, "Scene 1/16")                   # 6 ticks per step
+        e.on_external_clock_byte(0xFA)
+        for tick in range(96):
+            e.on_external_clock_byte(0xF8)
+            self.assertEqual(e.tracks[0]["_current_step"], (tick // 12) % 16)
+            self.assertEqual(e.tracks[1]["_current_step"], (tick // 6) % 16)
+
+    def test_first_tick_after_start_plays_step_one(self):
+        e, notes = make()
+        layouts.pad_press(e, 0, 7)
+        e.on_external_clock_byte(0xFA)
+        e.on_external_clock_byte(0xF8)
+        self.assertEqual(len([n for n in notes if n[0] == "on"]), 1)
+
+    def test_tempo_change_does_not_move_the_playhead(self):
+        e, _ = make()
+        e.start()
+        t0 = e.play_start
+        e.tick(t0 + 1.0)
+        before = [t["_current_step"] for t in e.tracks]
+        e.pattern["bpm"] = 60                         # half speed from now on
+        e.tick(t0 + 1.001)
+        self.assertEqual([t["_current_step"] for t in e.tracks], before)
+
+    def test_new_track_does_not_fire_late_on_internal_clock(self):
+        e, notes = make()
+        e.start()
+        t0, dur = e.play_start, e.step_duration(e.tracks[0])
+        e.tick(t0 + dur * 5.5)                        # half way through step 5
+        e.add_track()
+        t = e.tracks[-1]
+        t["steps"][5]["on"] = True
+        self.assertEqual(t["_current_step"], 5)
+        before = len(notes)
+        e.tick(t0 + dur * 5.6)
+        self.assertEqual(len(notes), before)          # no late hit of step 5
+        e.tick(t0 + dur * 6.01)
+        e.tick(t0 + dur * 21.01)                      # next time it comes round, it plays
+        self.assertTrue(any(n[0] == "on" for n in notes))
+
+
 class NoteLengthTest(unittest.TestCase):
     def test_note_length_holds_the_note(self):
         e, notes = make()
