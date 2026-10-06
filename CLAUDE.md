@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-BCA Seq is a Python 3 (stdlib only) process module for `push-tethered-app`. It is a MIDI step
+BCA Sequencer is a Python 3 (stdlib only) process module for `push-tethered-app`. It is a MIDI step
 sequencer with switchable pad Layouts. Built from `pta-module-gridseq`.
 
 @~/.claude/push-family.md

@@ -1,4 +1,4 @@
-"""view.py - screen ops and LED colors for BCA Seq. No I/O, no state changes."""
+"""view.py - screen ops and LED colors for BCA Sequencer. No I/O, no state changes."""
 
 import json
 import os

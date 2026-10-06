@@ -1,4 +1,4 @@
-# BCA Seq
+# BCA Sequencer
 
 A MIDI step sequencer for Push, run as a PTA process module. The Layout button changes how the
 sequencer shows on the pads and screen. The functions stay the same.

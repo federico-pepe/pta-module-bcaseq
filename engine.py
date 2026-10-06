@@ -1,4 +1,4 @@
-"""engine.py - BCA Seq model: tracks, steps, per-track rate, timing, triggers.
+"""engine.py - BCA Sequencer model: tracks, steps, per-track rate, timing, triggers.
 
 No I/O here. run.py talks to the host. view.py and layouts.py draw.
 Every track has 16 steps (one 4x4 pad quadrant) and its own rate.
