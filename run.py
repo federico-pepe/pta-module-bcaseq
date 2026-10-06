@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""run.py - BCA Seq protocol loop.
+"""run.py - BCA Sequencer protocol loop.
 
 Newline-delimited JSON on stdin/stdout, same envelope as the other PTA
 process modules. This file does I/O and event dispatch only. The model is
