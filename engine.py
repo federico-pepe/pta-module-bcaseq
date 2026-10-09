@@ -199,16 +199,15 @@ class Engine:
         self.pending = []            # (due, kind, ch, note, vel) kind "on" or "off"
         self.friction = Friction()
 
-        self.rate_track = 0          # track the Scene buttons act on
+        self.rate_track = 0          # working track: Scene buttons, Layout 3 step grid, pad window
         self.active_param = None     # (encoder idx, deadline) of the last touched/turned knob
         self.layout = 0
-        self.track_page = 0          # page index in units of the layout's tracks per page
+        self.track_page = 0          # screen page, 4 tracks each
         self.octave = 3              # Layout 2 pitch grid octave
         self.edit_track = None       # track index being edited, or None
         self.sel = {}                # track index -> selected step index
         self.sel_note = 0            # index of the selected note inside the selected step
-        self.armed = None            # Layout 3: (track, note) waiting for a step pad
-        self.grid_track = 0          # Layout 3: track shown on the step grid
+        self.armed = None            # Layouts 2 and 3: note number waiting for a step pad
 
         self.accent_on = False
         self.repeat_on = False
@@ -366,14 +365,14 @@ class Engine:
         self.stop()
         self.pattern = out
         self.edit_track, self.sel, self.track_page, self.rate_track = None, {}, 0, 0
-        self.sel_note, self.armed, self.grid_track = 0, None, 0
+        self.sel_note, self.armed = 0, None
         return True
 
     def new_pattern(self):
         self.stop()
         self.pattern = default_pattern()
         self.edit_track, self.sel, self.track_page, self.rate_track = None, {}, 0, 0
-        self.sel_note, self.armed, self.grid_track = 0, None, 0
+        self.sel_note, self.armed = 0, None
 
     def to_doc(self):
         p = self.pattern

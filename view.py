@@ -89,9 +89,8 @@ def button_colors(state):
 
     out["Select (main)"] = BTN_FULL if (e.edit_step() or e.scale_menu) else BTN_DIM
 
-    per = layouts.current(e).tracks_per_page
-    btns_per_track = 8 // per
-    page = layouts.page_tracks(e)
+    btns_per_track = 2
+    page = layouts.screen_tracks(e)
     for n in range(8):
         slot = n // btns_per_track
         name = "Screen bottom %d" % (n + 1)
@@ -272,8 +271,8 @@ def _dividers(col_w, n):
 
 
 def _sequencer_ops(e):
-    tracks = layouts.page_tracks(e)
-    n = layouts.current(e).tracks_per_page
+    tracks = layouts.screen_tracks(e)
+    n = layouts.SCREEN_TRACKS
     col_w = W // n
     es = e.edit_step()
     editing = layouts.editing(e)

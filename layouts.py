@@ -16,7 +16,8 @@ STEP_SELECTED = 120  # white
 PLAYHEAD = 126       # pure green
 PITCH_WHITE = 120
 STEP_DIM_WHITE = 118   # Layout 3 step grid, empty step. Check on the device.
-ARMED = 120            # Layout 3 armed pitch pad: pure white, max brightness. Same as the in-scale pads, check on the device.
+PITCH_DIM_WHITE = 118  # pitch pad in key and not selected. Check on the device.
+SCREEN_TRACKS = 4      # tracks on the screen, in every layout
 
 
 def dim(color):
@@ -47,8 +48,8 @@ def _pad_for_step(slot, i):
 
 class Layout1:
     name = "Layout 1"
-    tracks_per_page = 4
-    # slot -> track offset on the page
+    pad_group = 4           # pad window = the screen page
+    # slot -> track offset in the pad window
     seq_slots = {0: 0, 1: 1, 2: 2, 3: 3}
     has_octave = False
     arm_mode = False
@@ -56,19 +57,19 @@ class Layout1:
 
 class Layout2:
     name = "Layout 2"
-    tracks_per_page = 2
+    pad_group = 2           # the pair of tracks that holds the working track
     seq_slots = {0: 0, 2: 1}   # TL = first track, BL = second
     pitch_slots = {1: 0, 3: 1}  # TR edits TL track, BR edits BL track
     has_octave = True
-    arm_mode = False
+    arm_mode = True
 
 
 class Layout3:
     name = "Layout 3"
-    tracks_per_page = 3
+    pad_group = 3           # the triple of tracks that holds the working track
     seq_slots = {}
     pitch_slots = {1: 0, 2: 1, 3: 2}   # TR, BL, BR edit the first, second, third track
-    shared_grid_slot = 0               # TL: one step grid for grid_track()
+    shared_grid_slot = 0               # TL: one step grid for the working track
     has_octave = True
     arm_mode = True                    # a pitch pad arms a note, a step pad adds it
 
@@ -85,40 +86,50 @@ def has_octave(e):
 
 
 def first_track(e):
-    return e.track_page * current(e).tracks_per_page
-
-
-def page_tracks(e):
-    """Track indices shown on the current page (may be fewer than a full page)."""
+    """First track of the pad window. Layout 1 follows the screen page, the others
+    the group (pair or triple) that holds the working track."""
     lay = current(e)
+    if lay is Layout1:
+        return e.track_page * SCREEN_TRACKS
+    rt = max(0, min(e.rate_track, len(e.tracks) - 1))
+    return rt // lay.pad_group * lay.pad_group
+
+
+def pad_tracks(e):
+    """Track indices on the pads (may be fewer than a full window)."""
     start = first_track(e)
-    return [i for i in range(start, start + lay.tracks_per_page) if i < len(e.tracks)]
+    return [i for i in range(start, start + current(e).pad_group) if i < len(e.tracks)]
 
 
-def grid_track(e):
-    """Layout 3: the track shown on the step grid. Falls back to the first track on the page."""
-    page = page_tracks(e)
-    if e.grid_track in page:
-        return e.grid_track
-    return page[0] if page else 0
+def screen_tracks(e):
+    """Track indices on the screen: 4 per page, in every layout."""
+    start = e.track_page * SCREEN_TRACKS
+    return [i for i in range(start, start + SCREEN_TRACKS) if i < len(e.tracks)]
 
 
 def can_page_right(e):
-    return (e.track_page + 1) * current(e).tracks_per_page < len(e.tracks)
+    return (e.track_page + 1) * SCREEN_TRACKS < len(e.tracks)
+
+
+def page_screen(e, direction):
+    """Page Left/Right: move the screen by 4 tracks. The first track of the new
+    page becomes the working track, so the pads follow the screen."""
+    page = e.track_page + direction
+    if page < 0 or (direction > 0 and not can_page_right(e)):
+        return
+    e.track_page = page
+    e.rate_track = page * SCREEN_TRACKS
 
 
 def switch_layout(e, new):
-    """Keep the first visible track on screen when the page size changes."""
-    first = first_track(e)
     e.layout = new % len(LAYOUTS)
-    e.track_page = first // current(e).tracks_per_page
     e.armed = None
 
 
 def track_for_slot(e, slot):
     lay = current(e)
     if getattr(lay, "shared_grid_slot", None) == slot:
-        return grid_track(e) if page_tracks(e) else None
+        return e.rate_track if e.rate_track in pad_tracks(e) else None
     off = lay.seq_slots.get(slot)
     if off is None:
         return None
@@ -138,26 +149,25 @@ def pitch_track_for_slot(e, slot):
 def editing(e):
     """True when the screen shows the edit view: a step of a track on this page is selected."""
     es = e.edit_step()
-    return es is not None and es[0] in page_tracks(e)
+    return es is not None and es[0] in screen_tracks(e)
 
 
 def slen_track(e, enc_idx):
-    """Main screen: each track owns 8 / tracks_per_page encoders. The second one
-    is its S LEN knob. Returns the track index for that encoder, else None."""
-    per = 8 // current(e).tracks_per_page
-    slot, role = divmod(enc_idx, per)
-    page = page_tracks(e)
+    """Main screen: each track owns 2 encoders. The second one is its S LEN knob.
+    Returns the track index for that encoder, else None."""
+    slot, role = divmod(enc_idx, 2)
+    page = screen_tracks(e)
     return page[slot] if role == 1 and slot < len(page) else None
 
 
 def slen_encoder(e, slot):
-    return slot * (8 // current(e).tracks_per_page) + 1
+    return slot * 2 + 1
 
 
 def pitch_ref_track(e):
-    """Track whose pitch grid the octave OSD describes: the last touched track
-    if it is on the page, else the first track on the page."""
-    page = page_tracks(e)
+    """Track whose pitch grid the octave OSD describes: the working track if it
+    is on the pads, else the first track there."""
+    page = pad_tracks(e)
     return e.rate_track if e.rate_track in page else (page[0] if page else 0)
 
 
@@ -182,31 +192,18 @@ def pad_press(e, col, row):
             else:
                 e.select_step(ti, si)
         elif current(e).arm_mode and e.armed is not None:
-            e.toggle_note(ti, si, e.armed[1], activate=True)
+            e.toggle_note(ti, si, e.armed, activate=True)
         else:
             e.tap_step(ti, si)
         return
     pt = pitch_track_for_slot(e, slot)
     if pt is not None:
-        if current(e).arm_mode:
-            root, scale = e.key_of(pt)
-            note = eng.grid_pitches(root, scale, e.pattern["in_key"], e.octave)[pitch_index(col, row)]
-            if note > 127:
-                return
-            e.armed = None if e.armed == (pt, note) else (pt, note)
-            e.grid_track = pt
-            e.rate_track = pt
-            return
-        si = e.sel.get(pt)
-        if si is None:
-            return
         root, scale = e.key_of(pt)
-        notes = eng.grid_pitches(root, scale, e.pattern["in_key"], e.octave)
-        note = notes[pitch_index(col, row)]
-        if note <= 127:
-            e.toggle_note(pt, si, note)
-            e.edit_track = pt
-            e.rate_track = pt
+        note = eng.grid_pitches(root, scale, e.pattern["in_key"], e.octave)[pitch_index(col, row)]
+        if note > 127:
+            return
+        e.armed = None if (e.armed == note and e.rate_track == pt) else note
+        e.rate_track = pt
 
 
 def pad_colors(e):
@@ -250,22 +247,26 @@ def _paint_pitch(e, grid, slot, track_idx):
     in_scale = set(eng.scale_notes(root, scale))
     t = e.tracks[track_idx]
     color = t["color"]
+    # selected: the armed note on the working track's grid, and the notes of the selected step
     es = e.sel.get(track_idx)
-    in_step = set(t["steps"][es]["pitches"]) if es is not None and t["steps"][es]["on"] else set()
+    selected = set(t["steps"][es]["pitches"]) if es is not None and t["steps"][es]["on"] else set()
+    if track_idx == e.rate_track and e.armed is not None:
+        selected.add(e.armed)
     col0 = 0 if slot in (0, 2) else 4
     row0 = 4 if slot in (0, 1) else 0
     for i, note in enumerate(notes):
         c, r = col0 + i % 4, row0 + i // 4
+        sel = note in selected
         if note > 127:
             grid[r][c] = OFF
-        elif note % 12 == root or note in in_step:
-            grid[r][c] = color
-        elif in_key or note % 12 in in_scale:
+        elif note % 12 == root:
+            grid[r][c] = color if sel else dim(color)
+        elif sel:
             grid[r][c] = PITCH_WHITE
+        elif in_key or note % 12 in in_scale:
+            grid[r][c] = PITCH_DIM_WHITE
         else:
             grid[r][c] = OFF
-        if e.armed == (track_idx, note) and note <= 127:
-            grid[r][c] = ARMED
     # the pad of a note that just sounded flashes green
     if time.monotonic() < t["_lit_until"]:
         for i, note in enumerate(notes):

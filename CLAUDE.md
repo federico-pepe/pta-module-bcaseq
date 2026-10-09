@@ -27,10 +27,11 @@ sequencer with switchable pad Layouts. Built from `pta-module-gridseq`.
 
 ## Notes
 - A step holds `pitches`, a sorted unique list. There is no `step["pitch"]`. Use `engine.toggle_note` to add or remove a note and `engine.note_index(step)` for the selected note (`engine.sel_note`).
-- Layout 3 uses `engine.armed` (track, note) and `engine.grid_track`. Read the grid track with `layouts.grid_track(e)`.
+- `engine.rate_track` is the working track. The screen always shows 4 tracks (`layouts.screen_tracks`, page = `engine.track_page`). The pads show `layouts.pad_tracks`: the screen page in Layout 1, the pair or triple that holds the working track in Layouts 2 and 3. Layout 3's step grid is the working track.
+- Layouts 2 and 3 use `engine.armed`, a note number. A pitch pad arms it. A step pad adds it with `toggle_note(..., activate=True)`.
 
 ## Open questions for hardware
-- Layout 3 colors: empty step (`STEP_DIM_WHITE` 118), armed pad (`ARMED` 120, same as in-scale pads), notes of the selected step on the pitch grids (track color). Chord text on the main and edit screens. 3-track column layout.
+- Layout 3 colors: empty step (`STEP_DIM_WHITE` 118), unselected in-key pitch pad (`PITCH_DIM_WHITE` 118), selected pitch pad (`PITCH_WHITE` 120), root (dim track color, full when selected). Chord text on the main and edit screens.
 - Empty step pad color (124, dgray) and playhead green (126) need a look on the device.
 - Key and scale are global by default (`pattern["scope_global"]`). With Scope = Track each track has its own `root` and `scale`. Always use `engine.key_of(track)`. In Key is always global.
 - Rate is per track. Scene buttons act on `engine.rate_track` (last touched track).
