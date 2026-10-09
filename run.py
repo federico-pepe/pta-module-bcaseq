@@ -23,7 +23,7 @@ import view
 SEQUENCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sequences")
 POPUP_DURATION = 1.5
 LED_REFRESH_S = 1.0
-LAYOUT_OSD = ["4 TRACKS", "2 TRACKS + PITCH"]
+LAYOUT_OSD = ["4 TRACKS", "2 TRACKS + PITCH", "3 TRACKS + STEPS"]
 
 
 def send(obj):
@@ -108,15 +108,18 @@ def relight(state):
 # -- events ---------------------------------------------------------------------
 
 def handle_pad(state, data):
-    if state.browser_active or not data.get("pressed"):
-        return
-    layouts.pad_press(state.engine, data.get("col"), data.get("row"))
+    col, row = data.get("col"), data.get("row")
+    if not data.get("pressed"):
+        layouts.pad_release(state.engine, col, row)
+    elif not state.browser_active:
+        layouts.pad_press(state.engine, col, row)
 
 
 def octave_range_label(e):
     root, scale = e.key_of(layouts.pitch_ref_track(e))
     notes = [n for n in eng.grid_pitches(root, scale, e.pattern["in_key"], e.octave) if n <= 127]
-    return "%s - %s" % (view.note_name(min(notes)), view.note_name(max(notes)))
+    flats = e.pattern["flats"]
+    return "%s - %s" % (view.note_name(min(notes), flats), view.note_name(max(notes), flats))
 
 
 def handle_button(state, data):
@@ -159,14 +162,13 @@ def handle_button(state, data):
             e.set_rate(e.rate_track, name)
             state.show_popup("RATE TRACK %d" % (e.rate_track + 1), name.replace("Scene ", ""))
     elif name in ("Octave Up", "Octave Down"):
-        if e.layout == 1:
+        if layouts.has_octave(e):
             e.shift_octave(1 if name == "Octave Up" else -1)
             state.show_popup("OCTAVE", octave_range_label(e))
     elif name == "Page Left":
-        e.track_page = max(0, e.track_page - 1)
+        layouts.page_screen(e, -1)
     elif name == "Page Right":
-        if layouts.can_page_right(e):
-            e.track_page += 1
+        layouts.page_screen(e, 1)
     elif name == "Add":
         if e.add_track():
             state.show_popup("TRACK ADDED", str(len(e.tracks)))
@@ -196,10 +198,9 @@ SCREEN_BOTTOM = {"Screen bottom %d" % n: n - 1 for n in range(1, 9)}
 
 
 def _track_button(e, n):
-    """Screen-bottom buttons: each track owns 8 / tracks_per_page buttons."""
-    per = layouts.current(e).tracks_per_page
-    slot = n // (8 // per)
-    page = layouts.page_tracks(e)
+    """Screen-bottom buttons: each track owns 2 buttons, 4 tracks on the screen."""
+    slot = n // 2
+    page = layouts.screen_tracks(e)
     if slot >= len(page):
         return
     if e.shift:
@@ -252,6 +253,7 @@ def handle_encoder(state, data):
         return
     ti = layouts.slen_track(e, idx)
     if ti is not None:
+        e.rate_track = ti                    # the pads follow the knob
         e.nudge_track_length(ti, delta, idx)
 
 
@@ -273,6 +275,7 @@ def handle_touch(state, data):
         return
     ti = layouts.slen_track(e, idx)
     if ti is not None:
+        e.rate_track = ti
         e.touch_param(idx)
         if e.delete:
             e.reset_track_length(ti, idx)

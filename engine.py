@@ -119,8 +119,16 @@ class Friction:
         self._acc = {}
 
 
+def clean_pitches(v):
+    """A valid note list from saved data: sorted, unique, 0-127, never empty."""
+    if not isinstance(v, list):
+        return [DEFAULT_PITCH]
+    notes = {max(0, min(127, n)) for n in v if isinstance(n, int) and not isinstance(n, bool)}
+    return sorted(notes) or [DEFAULT_PITCH]
+
+
 def new_step():
-    return {"on": False, "pitch": DEFAULT_PITCH, "pitch_set": False, "vel": DEFAULT_VELOCITY,
+    return {"on": False, "pitches": [DEFAULT_PITCH], "pitch_set": False, "vel": DEFAULT_VELOCITY,
             "gate": 50, "prob": 100, "offset": 0, "repeat": 1, "len": 1}
 
 
@@ -136,10 +144,9 @@ def new_track(index):
         "color": TRACK_COLORS[(index * TRACK_COLOR_STEP) % len(TRACK_COLORS)],
         "_current_step": -1,
         "last_pitch": None,     # last note entered on this track. New steps start from it.
-        "_last_note": None,
-        "_lit_note": None,      # note that just sounded, for the pitch pad flash
+        "_lit_notes": [],       # notes that just sounded, for the pitch pad flash
         "_lit_until": 0.0,
-        "_show_until": 0.0,     # the screen shows _lit_note until this time
+        "_show_until": 0.0,     # the screen shows _lit_notes until this time
         "_progress": 0.0,       # 0-1 position inside the track's loop
     }
 
@@ -149,6 +156,7 @@ def default_pattern():
         "bpm": DEFAULT_BPM,
         "root": 0, "scale": DEFAULT_SCALE, "in_key": True,
         "scope_global": True,   # True: one key/scale for all tracks. False: each track has its own.
+        "flats": False,         # note names: False = sharps (C#), True = flats (Db)
         "tracks": [new_track(i) for i in range(DEFAULT_TRACK_COUNT)],
     }
 
@@ -192,13 +200,16 @@ class Engine:
         self.pending = []            # (due, kind, ch, note, vel) kind "on" or "off"
         self.friction = Friction()
 
-        self.rate_track = 0          # track the Scene buttons act on
+        self.rate_track = 0          # working track: Scene buttons, Layout 3 step grid, pad window
         self.active_param = None     # (encoder idx, deadline) of the last touched/turned knob
         self.layout = 0
-        self.track_page = 0          # page index in units of the layout's tracks per page
+        self.track_page = 0          # screen page, 4 tracks each
         self.octave = 3              # Layout 2 pitch grid octave
         self.edit_track = None       # track index being edited, or None
         self.sel = {}                # track index -> selected step index
+        self.sel_note = 0            # index of the selected note inside the selected step
+        self.armed = set()           # Layouts 2 and 3: notes waiting for a step pad
+        self.pad_down = {}           # (col, row) -> record of each pad that is down now (see layouts.pad_press)
 
         self.accent_on = False
         self.repeat_on = False
@@ -215,6 +226,11 @@ class Engine:
         self.last_ext_clock = None
 
     # -- state helpers ---------------------------------------------------------
+
+    @property
+    def pitch_held(self):
+        """(col, row) of the pitch pads that are down now."""
+        return {k for k, v in self.pad_down.items() if v["kind"] == "pitch"}
 
     @property
     def tracks(self):
@@ -266,6 +282,8 @@ class Engine:
         self.scale_menu = False
         self.color_picker_track = None
         self.active_param = None
+        self.armed = set()
+        self.sel_note = 0
         self.friction.reset()
 
     def edit_step(self):
@@ -326,6 +344,7 @@ class Engine:
             out["scale"] = pat["scale"]
         out["in_key"] = bool(pat.get("in_key", True))
         out["scope_global"] = bool(pat.get("scope_global", True))
+        out["flats"] = bool(pat.get("flats", False))
         tracks = []
         for i, saved in enumerate((pat.get("tracks") or [])[:MAX_TRACKS]):
             if not isinstance(saved, dict):
@@ -348,26 +367,28 @@ class Engine:
                     t["steps"][j].update({k: v for k, v in saved_steps[j].items() if k in t["steps"][j]})
                     st = t["steps"][j]
                     st["len"] = max(1, min(STEPS, int(st["len"]))) if isinstance(st["len"], int) else 1
-                    if "pitch_set" not in saved_steps[j]:   # older file: a moved pitch counts as set
-                        t["steps"][j]["pitch_set"] = t["steps"][j]["pitch"] != DEFAULT_PITCH
+                    st["pitches"] = clean_pitches(st["pitches"])
             tracks.append(t)
         out["tracks"] = tracks or [new_track(i) for i in range(DEFAULT_TRACK_COUNT)]
         self.stop()
         self.pattern = out
         self.edit_track, self.sel, self.track_page, self.rate_track = None, {}, 0, 0
+        self.sel_note, self.armed = 0, set()
         return True
 
     def new_pattern(self):
         self.stop()
         self.pattern = default_pattern()
         self.edit_track, self.sel, self.track_page, self.rate_track = None, {}, 0, 0
+        self.sel_note, self.armed = 0, set()
 
     def to_doc(self):
         p = self.pattern
         tracks = [{k: v for k, v in t.items() if not k.startswith("_")} for t in p["tracks"]]
         return {"version": 1, "pattern": {
             "bpm": p["bpm"], "root": p["root"], "scale": p["scale"],
-            "in_key": p["in_key"], "scope_global": p["scope_global"], "tracks": tracks}}
+            "in_key": p["in_key"], "scope_global": p["scope_global"], "flats": p["flats"],
+            "tracks": tracks}}
 
     # -- step editing ----------------------------------------------------------
 
@@ -380,16 +401,20 @@ class Engine:
         s["on"] = not s["on"]
         if s["on"]:
             if not s["pitch_set"]:
-                s["pitch"] = self.entry_pitch(track_idx)
+                s["pitches"] = [self.entry_pitch(track_idx)]
                 s["pitch_set"] = True
-            s["vel"] = ACCENT_VELOCITY if self.accent_on else DEFAULT_VELOCITY
-            s["repeat"] = self.repeat_count if self.repeat_on else 1
+            self._entry_defaults(s)
             self.select_step(track_idx, step_idx)
         else:
             self.deselect(track_idx)
 
+    def _entry_defaults(self, s):
+        s["vel"] = ACCENT_VELOCITY if self.accent_on else DEFAULT_VELOCITY
+        s["repeat"] = self.repeat_count if self.repeat_on else 1
+
     def select_step(self, track_idx, step_idx):
         self.sel[track_idx] = step_idx
+        self.sel_note = 0
         self.edit_track = track_idx
         self.rate_track = track_idx
         self.friction.reset()
@@ -406,14 +431,64 @@ class Engine:
         last = self.tracks[track_idx]["last_pitch"]
         return last if last is not None else self.default_pitch(track_idx)
 
-    def _remember_pitch(self, track_idx, step):
+    def _remember_pitch(self, track_idx, step, note):
         step["pitch_set"] = True
-        self.tracks[track_idx]["last_pitch"] = step["pitch"]
+        self.tracks[track_idx]["last_pitch"] = note
 
-    def set_pitch(self, track_idx, step_idx, note):
+    def note_index(self, step):
+        """Index of the selected note in a step, kept inside the list."""
+        return max(0, min(self.sel_note, len(step["pitches"]) - 1))
+
+    def toggle_note(self, track_idx, step_idx, note, activate=False):
+        self.toggle_notes(track_idx, step_idx, [note], activate)
+
+    def toggle_notes(self, track_idx, step_idx, notes, activate=False):
+        """Add notes to a step. Step on and has all of them: remove them. Last note
+        gone: step off. Step off: it takes just these notes, activate=True turns it on."""
+        if not (0 <= step_idx < STEPS) or not notes:
+            return
+        notes = sorted({max(0, min(127, n)) for n in notes})
         s = self.tracks[track_idx]["steps"][step_idx]
-        s["pitch"] = max(0, min(127, note))
-        self._remember_pitch(track_idx, s)
+        at = 0
+        if s["on"] and all(n in s["pitches"] for n in notes):
+            keep = [n for n in s["pitches"] if n not in notes]
+            if not keep:
+                s["on"] = False
+                self.deselect(track_idx)
+                return
+            at = s["pitches"].index(notes[0])
+            s["pitches"] = keep
+        else:
+            if s["on"]:
+                s["pitches"] = sorted(set(s["pitches"]) | set(notes))
+            else:
+                s["pitches"] = notes
+                if activate:
+                    s["on"] = True
+                    self._entry_defaults(s)
+            self._remember_pitch(track_idx, s, notes[-1])
+        if s["on"]:
+            self.select_step(track_idx, step_idx)
+            last = notes[-1]
+            self.sel_note = s["pitches"].index(last) if last in s["pitches"] else min(at, len(s["pitches"]) - 1)
+        else:
+            self.sel_note = 0
+
+    def _free_step(self, note, direction, taken, track_idx):
+        """Next pitch from `note` that is not in `taken`. Stays put at the range edge."""
+        cur = note
+        while True:
+            nxt = self._step_pitch(cur, direction, track_idx)
+            if nxt == cur:
+                return note
+            if nxt not in taken:
+                return nxt
+            cur = nxt
+
+    def _set_selected_note(self, s, note):
+        s["pitches"][self.note_index(s)] = note
+        s["pitches"].sort()
+        self.sel_note = s["pitches"].index(note)
 
     def _step_pitch(self, note, direction, track_idx=0):
         """One pitch step: next scale note when In Key is on, else a semitone."""
@@ -443,9 +518,12 @@ class Engine:
             return True
         lo, hi = PARAM_RANGE[param]
         if param == "pitch":
+            note = s["pitches"][self.note_index(s)]
+            taken = set(s["pitches"]) - {note}
             for _ in range(abs(n)):
-                s["pitch"] = self._step_pitch(s["pitch"], 1 if n > 0 else -1, ti)
-            self._remember_pitch(ti, s)
+                note = self._free_step(note, 1 if n > 0 else -1, taken, ti)
+            self._set_selected_note(s, note)
+            self._remember_pitch(ti, s, note)
         elif param == "channel":
             t["channel"] = max(lo, min(hi, t["channel"] + n))
         else:
@@ -474,13 +552,15 @@ class Engine:
         ti, si = es
         t, s, param = self.tracks[ti], self.tracks[ti]["steps"][es[1]], PARAMS[idx]
         if param == "pitch":
-            s["pitch"] = self.default_pitch(ti)
+            note = self.default_pitch(ti)
+            if note not in s["pitches"]:
+                self._set_selected_note(s, note)
         elif param == "channel":
             t["channel"] = 1
         else:
             s[STEP_FIELD.get(param, param)] = PARAM_DEFAULT[param]
 
-    # Scale menu encoders: 1 Key, 2 Scale, 4 In Key, 5 Scope. Encoder 3 is unused
+    # Scale menu encoders: 1 Key, 2 Scale, 4 In Key, 5 Scope, 6 Names (sharps or flats). Encoder 3 is unused
     # because the Scale name needs two screen columns.
     def nudge_scale_menu(self, idx, delta):
         p = self.pattern
@@ -502,6 +582,10 @@ class Engine:
             n = self.friction.feed("scope", delta)
             if n:
                 self.set_scope_global(n > 0)
+        elif idx == 5:
+            n = self.friction.feed("flats", delta)
+            if n:
+                p["flats"] = n > 0
         self.octave = min(self.octave, self.max_octave())
 
     def set_scope_global(self, on):
@@ -542,7 +626,7 @@ class Engine:
         for t in self.tracks:
             t["_current_step"] = -1
             t["_progress"] = 0.0
-            t["_lit_note"] = None
+            t["_lit_notes"] = []
             t["_show_until"] = 0.0
 
     def is_externally_synced(self):
@@ -617,9 +701,9 @@ class Engine:
             off_at = fire_at + (s["gate"] / 100.0) * slot
             if r == repeats - 1:
                 off_at += (s["len"] - 1) * dur     # note length: the last hit holds longer
-            self._schedule(t["channel"], s["pitch"], s["vel"], fire_at, off_at, now)
-        t["_last_note"] = s["pitch"]
-        t["_lit_note"] = s["pitch"]
+            for note in s["pitches"]:
+                self._schedule(t["channel"], note, s["vel"], fire_at, off_at, now)
+        t["_lit_notes"] = list(s["pitches"])
         t["_lit_until"] = max(off_at, now + FLASH_MIN_S)
         t["_show_until"] = max(off_at, now + dur)
 

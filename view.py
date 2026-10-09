@@ -4,6 +4,7 @@ import json
 import os
 import time
 
+import chords
 import colortable
 import engine as eng
 import layouts
@@ -76,7 +77,7 @@ def button_colors(state):
 
     out["Page Left"] = BTN_DIM if e.track_page > 0 else BTN_OFF
     out["Page Right"] = BTN_DIM if layouts.can_page_right(e) else BTN_OFF
-    if e.layout == 1:
+    if layouts.has_octave(e):
         out["Octave Up"] = BTN_FULL if held.get("Octave Up") else BTN_DIM
         out["Octave Down"] = BTN_FULL if held.get("Octave Down") else BTN_DIM
     else:
@@ -89,9 +90,8 @@ def button_colors(state):
 
     out["Select (main)"] = BTN_FULL if (e.edit_step() or e.scale_menu) else BTN_DIM
 
-    per = layouts.current(e).tracks_per_page
-    btns_per_track = 8 // per
-    page = layouts.page_tracks(e)
+    btns_per_track = 2
+    page = layouts.screen_tracks(e)
     for n in range(8):
         slot = n // btns_per_track
         name = "Screen bottom %d" % (n + 1)
@@ -139,9 +139,30 @@ def _rect(x, y, w, h, c):
     return {"kind": "rect", "params": {"x": x, "y": y, "w": w, "h": h, "c": c}}
 
 
-def note_name(n):
+def note_name(n, flats=False):
     n = max(0, min(127, n))
-    return "%s%d" % (["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"][n % 12], n // 12 - 2)
+    return "%s%d" % (chords.pitch_class_name(n, flats), n // 12 - 2)
+
+
+def notes_text(notes, flats=False, width=None, scale=1):
+    """Note names joined by spaces. With width: drop notes from the end, add "+N"."""
+    names = [note_name(n, flats) for n in notes]
+    if width is None:
+        return " ".join(names)
+    for k in range(len(names), 0, -1):
+        text = " ".join(names[:k]) + ("" if k == len(names) else " +%d" % (len(names) - k))
+        if CHAR_W * scale * len(text) <= width:
+            return text
+    return "+%d" % len(names)
+
+
+def headline(x, baseline, notes, flats, width, c):
+    """(big text op, is_chord). Named chord: name is big, caller draws notes small. Else notes are big."""
+    name = chords.chord_name(notes, flats)
+    if name:
+        return _text(x, baseline, name, c, fit_scale(name, width)), True
+    scale = fit_scale(notes_text(notes, flats), width)
+    return _text(x, baseline, notes_text(notes, flats, width, scale), c, scale), False
 
 
 def scale_label(name):
@@ -176,7 +197,7 @@ def draw(state):
 
 # Scale menu cells by encoder column. Scale takes columns 2 and 3, so the longest
 # name ("Phrygian Dominant", 17 characters at 2x) fits before In Key.
-SCALE_MENU_COL = {"Key": 0, "Scale": 1, "In Key": 3, "Scope": 4}
+SCALE_MENU_COL = {"Key": 0, "Scale": 1, "In Key": 3, "Scope": 4, "Names": 5}
 
 
 def _scale_ops(e, white):
@@ -184,9 +205,10 @@ def _scale_ops(e, white):
     mt = e.menu_track()
     c = white if mt is None else track_color(e.tracks[mt]["color"])
     root, scale = e.key_of(mt if mt is not None else 0)
-    cells = [("Key", NOTE_NAMES[root]), ("Scale", scale_label(scale)),
+    cells = [("Key", chords.pitch_class_name(root, p["flats"])), ("Scale", scale_label(scale)),
              ("In Key", "On" if p["in_key"] else "Off"),
-             ("Scope", "Global" if p["scope_global"] else "Track")]
+             ("Scope", "Global" if p["scope_global"] else "Track"),
+             ("Names", "Flat" if p["flats"] else "Sharp")]
     ops = []
     for label, value in cells:
         x = SCALE_MENU_COL[label] * (W // 8) + 4
@@ -195,8 +217,6 @@ def _scale_ops(e, white):
     ops.append(_text(4, 100, "Key and scale for: " + target, c))
     return ops
 
-
-NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 # Edit-mode gauge knobs: encoder 1-7 -> short label. Encoder 0 is Pitch, drawn big.
 KNOB_LABELS = ["VEL", "GATE", "PROB", "OFF", "MIDI", "REP", "N LEN"]
@@ -212,6 +232,10 @@ DIVIDER_Y, DIVIDER_H = 22, 132
 # Main screen
 INFO_BASELINE = 16
 NOTE_BASELINE = 76
+MAIN_TEXT_W = 148          # note text stops left of the S LEN knob
+EDIT_TEXT_W = 96           # edit view: space left of the knobs
+CHORD_BASELINE_MAIN = 90   # chord notes under the chord name, above the loop bar
+CHORD_BASELINE_EDIT = 98   # chord notes under the PITCH label, left of the knobs
 MAIN_BAR_Y = 96
 SLEN_Y = 50   # centre of the S LEN knob
 STRIP_Y, STRIP_H = 132, 22   # track names, directly above the Screen-bottom buttons
@@ -233,12 +257,18 @@ def knob_value(t, s, label):
     return t[f] if f == "channel" else s[f]
 
 
-def sounding_note(t, now):
-    """The note a track is playing right now, else None. The screen shows no
-    pitch for a note that is not triggered."""
-    if t["_lit_note"] is not None and now < t["_show_until"]:
-        return t["_lit_note"]
-    return None
+def sounding_notes(t, now):
+    """Notes a track is playing right now. The screen shows no pitch for a
+    note that is not triggered."""
+    return t["_lit_notes"] if now < t["_show_until"] else []
+
+
+def fit_scale(text, width):
+    """Biggest text scale (3, 2, 1) that fits the width."""
+    for scale in (3, 2):
+        if CHAR_W * scale * len(text) <= width:
+            return scale
+    return 1
 
 
 def rate_label(t):
@@ -266,12 +296,13 @@ def _dividers(col_w, n):
 
 
 def _sequencer_ops(e):
-    tracks = layouts.page_tracks(e)
-    n = layouts.current(e).tracks_per_page
+    tracks = layouts.screen_tracks(e)
+    n = layouts.SCREEN_TRACKS
     col_w = W // n
     es = e.edit_step()
     editing = layouts.editing(e)
     now = time.monotonic()
+    flats = e.pattern["flats"]
     white = color("white")
     shown = e.active_param[0] if (e.active_param and now < e.active_param[1]) else None
     ops = []
@@ -283,9 +314,13 @@ def _sequencer_ops(e):
             t = e.tracks[ti]
             x = slot * col_w
             c = track_color(t["color"])
-            playing = sounding_note(t, now)
-            if playing is not None:
-                ops.append(_text(x + 8, NOTE_BASELINE, note_name(playing), c, 3))
+            playing = sounding_notes(t, now)
+            if playing:
+                big, is_chord = headline(x + 8, NOTE_BASELINE, playing, flats, MAIN_TEXT_W, c)
+                ops.append(big)
+                if is_chord:
+                    ops.append(_text(x + 8, CHORD_BASELINE_MAIN,
+                                     notes_text(playing, flats, col_w - 16), c))
             enc = layouts.slen_encoder(e, slot)
             cx = enc * (W // 8) + (W // 16)
             ops += _gauge(cx, SLEN_Y, c, t["length"], 1, eng.STEPS)
@@ -311,13 +346,27 @@ def _sequencer_ops(e):
         s = display_step(e, ti)
         # The edited track shows the pitch of its selected step when that step plays.
         # Other tracks show the note they are sounding. Nothing else.
-        if hot:
-            pitch = s["pitch"] if s["on"] else None
-        else:
-            pitch = sounding_note(t, now)
-        if pitch is not None:
-            ops.append(_text(x + 8, 66, note_name(pitch), c, 3))
-        if hot or pitch is not None:
+        n_notes = len(s["pitches"])
+        big, small = None, None
+        if hot and s["on"]:
+            name = chords.chord_name(s["pitches"], flats)
+            if name:
+                big = _text(x + 8, 66, name, c, fit_scale(name, EDIT_TEXT_W))
+            else:
+                big = _text(x + 8, 66, note_name(s["pitches"][e.note_index(s)], flats), c, 3)
+            if n_notes > 1:
+                small = notes_text(s["pitches"], flats, EDIT_TEXT_W)
+        elif not hot:
+            playing = sounding_notes(t, now)
+            if playing:
+                big, is_chord = headline(x + 8, 66, playing, flats, EDIT_TEXT_W, c)
+                if is_chord:
+                    small = notes_text(playing, flats, EDIT_TEXT_W)
+        if big is not None:
+            ops.append(big)
+        if small:
+            ops.append(_text(x + 8, CHORD_BASELINE_EDIT, small, c))
+        if hot or big is not None:
             ops.append(_text(x + 8, 80, "PITCH", c))
         if hot and shown == 0:
             ops.append(_rect(x + 8, 84, CHAR_W * 5, 2, c))
@@ -362,7 +411,7 @@ def _strip_cell(e, ti, x, col_w):
 
 def _status_line(e):
     p = e.pattern
-    key = ("%s %s" % (NOTE_NAMES[p["root"]], scale_label(p["scale"]))
+    key = ("%s %s" % (chords.pitch_class_name(p["root"], p["flats"]), scale_label(p["scale"]))
            if p["scope_global"] else "Key per track")
     return "%d BPM   %s   %s" % (p["bpm"], key, "In Key" if p["in_key"] else "Chromatic")
 
