@@ -15,10 +15,12 @@ between minor versions).
 - Chord names (`chords.py`). A named chord shows the name big and its notes small on the main screen and in the edit view.
 - Scale menu, encoder 6 (Names): sharp or flat spelling for the key, the notes, the octave range and the chords.
 - Working track: a screen-bottom button, a pad, a pitch pad, or the S LEN knob of a track makes it the working track.
+- Long press (Layouts 2 and 3): hold a step pad to light its notes on every pitch grid. Hold a pitch pad to dim the steps that do not play the note.
 - `CHANGELOG.md`.
 
 ### Changed
 
+- Layouts 2 and 3: a step press acts on release, and only for a short press (less than 0.4 s). Layout 1 is unchanged.
 - The screen always shows 4 tracks in 4 columns, in every layout. S LEN is always the second knob of a track. Page Left/Right moves the screen by 4 tracks.
 - Layout 2 enters notes like Layout 3: arm a note, then press a step. A pitch pad no longer replaces the pitch of the selected step.
 - Pitch pad colors: in-key pads are dim white, the root is a dim track color. A selected pad is bright white, and a selected root is the full track color.

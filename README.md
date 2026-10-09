@@ -40,11 +40,20 @@ Press a step pad to add all armed notes to the step. Press the step pad again to
 
 If you select another track with a screen-bottom button, the armed notes stay armed. The next step that you press gets these notes on the new track.
 
+In Layouts 2 and 3, a step press acts when you release the pad, and only if you held it for less than 0.4 seconds. Arming a pitch pad acts at once. Pressing the only armed pad again to disarm it acts on release.
+
 If no note is armed, a step pad toggles the step, as in Layout 1. Shift + step pad selects the step and does not change it. Select (main) and a layout change disarm all notes.
 
-The screen shows the selected note of the selected step. It shows `NOTE i/n` when the step is a chord.
+The screen shows the selected note of the selected step.
 
 Each track remembers the last note that you entered, with a pitch pad or the Pitch encoder. A new step starts from that note. A step keeps its notes when you turn it off and on.
+
+### Long press (Layouts 2 and 3)
+Hold a pad for 0.4 seconds to see where the notes are. A long press changes nothing. Release the pad to go back.
+
+- **Long press on a step pad**: every pitch grid shows the notes that its track plays in that step. Non-root notes are bright white. A root note is the full track color. All other pads are dark gray.
+- **Long press on a pitch pad**: the step grid of that track turns dark gray. Only the steps that play the note keep their color. The playhead stays green. In Layout 2, only the quadrant of that track changes.
+- Layout 1 has no pitch grids. A long press there does nothing special, and a step press acts at once.
 
 ### Main screen
 Each track has an S LEN knob (the second encoder of its column). The knob sets the length of the sequence of the track. A pitch shows only while its note plays. A chord with a name shows the name big and its notes small below it. Examples are `Cmaj7` and `Amin/C`. Minor is "min" because the screen font has upper case only. A set of notes with no name shows the notes big. Text never goes over the S LEN knob. Notes that do not fit become `+N`. The edit view does the same for the selected step. Each track shows the last note played and a bar for its position in the loop. Track names and rates are at the bottom, above the Screen-bottom buttons. The selected track is a filled block.

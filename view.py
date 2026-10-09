@@ -235,7 +235,7 @@ NOTE_BASELINE = 76
 MAIN_TEXT_W = 148          # note text stops left of the S LEN knob
 EDIT_TEXT_W = 96           # edit view: space left of the knobs
 CHORD_BASELINE_MAIN = 90   # chord notes under the chord name, above the loop bar
-CHORD_BASELINE_EDIT = 98   # chord notes under the NOTE label, left of the knobs
+CHORD_BASELINE_EDIT = 98   # chord notes under the PITCH label, left of the knobs
 MAIN_BAR_Y = 96
 SLEN_Y = 50   # centre of the S LEN knob
 STRIP_Y, STRIP_H = 132, 22   # track names, directly above the Screen-bottom buttons
@@ -367,11 +367,7 @@ def _sequencer_ops(e):
         if small:
             ops.append(_text(x + 8, CHORD_BASELINE_EDIT, small, c))
         if hot or big is not None:
-            label = "PITCH"
-            if hot and n_notes > 1:
-                label = "NOTE %d/%d %s" % (e.note_index(s) + 1, n_notes,
-                                           note_name(s["pitches"][e.note_index(s)], flats))
-            ops.append(_text(x + 8, 80, label, c))
+            ops.append(_text(x + 8, 80, "PITCH", c))
         if hot and shown == 0:
             ops.append(_rect(x + 8, 84, CHAR_W * 5, 2, c))
         spacing = (col_w - 132) // 3

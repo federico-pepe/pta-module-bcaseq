@@ -209,7 +209,7 @@ class Engine:
         self.sel = {}                # track index -> selected step index
         self.sel_note = 0            # index of the selected note inside the selected step
         self.armed = set()           # Layouts 2 and 3: notes waiting for a step pad
-        self.pitch_held = set()      # (col, row) of pitch pads that are down now
+        self.pad_down = {}           # (col, row) -> record of each pad that is down now (see layouts.pad_press)
 
         self.accent_on = False
         self.repeat_on = False
@@ -226,6 +226,11 @@ class Engine:
         self.last_ext_clock = None
 
     # -- state helpers ---------------------------------------------------------
+
+    @property
+    def pitch_held(self):
+        """(col, row) of the pitch pads that are down now."""
+        return {k for k, v in self.pad_down.items() if v["kind"] == "pitch"}
 
     @property
     def tracks(self):

@@ -15,9 +15,11 @@ OFF = 0
 STEP_SELECTED = 120  # white
 PLAYHEAD = 126       # pure green
 PITCH_WHITE = 120
-STEP_DIM_WHITE = 118   # Layout 3 step grid, empty step. Check on the device.
+STEP_DIM_WHITE = 119   # Layout 3 step grid, empty step. Check on the device.
 PITCH_DIM_WHITE = 118  # pitch pad in key and not selected. Check on the device.
+LONG_PRESS_DIM = 119   # dark gray: dimmed pads during a long press, darker than the dim white
 SCREEN_TRACKS = 4      # tracks on the screen, in every layout
+LONG_PRESS_S = 0.4     # a pad held this long shows a highlight and does not act
 
 
 def dim(color):
@@ -122,7 +124,7 @@ def page_screen(e, direction):
 def switch_layout(e, new):
     e.layout = new % len(LAYOUTS)
     e.armed = set()
-    e.pitch_held = set()
+    e.pad_down = {}
 
 
 def track_for_slot(e, slot):
@@ -168,8 +170,18 @@ def pitch_ref_track(e):
     return e.rate_track if e.rate_track in page else (page[0] if page else 0)
 
 
-def pad_press(e, col, row):
-    """Handle a pad press. Shift selects without toggling."""
+def _step_tap(e, ti, si):
+    """Plain step press: add or remove the armed notes, else toggle the step."""
+    if e.armed:
+        e.toggle_notes(ti, si, sorted(e.armed), activate=True)
+    else:
+        e.tap_step(ti, si)
+
+
+def pad_press(e, col, row, now=None):
+    """Handle a pad press. Shift selects without toggling. In Layouts 2 and 3 a plain
+    step press and a disarm wait for release, so a long press can show a highlight."""
+    now = time.monotonic() if now is None else now
     if e.color_picker_track is not None:
         color = eng.color_picker_grid().get((row, col))
         if color is not None:
@@ -181,6 +193,8 @@ def pad_press(e, col, row):
         si = step_index(col, row)
         if si >= e.tracks[ti]["length"]:
             return
+        rec = {"t0": now, "kind": "step", "track": ti, "step": si, "pending": None}
+        e.pad_down[(col, row)] = rec
         if e.accent_held or e.repeat_held:
             e.apply_hold(ti, si)
         elif e.shift:
@@ -188,8 +202,8 @@ def pad_press(e, col, row):
                 e.deselect(ti)
             else:
                 e.select_step(ti, si)
-        elif current(e).arm_mode and e.armed:
-            e.toggle_notes(ti, si, sorted(e.armed), activate=True)
+        elif current(e).arm_mode:
+            rec["pending"] = "step"
         else:
             e.tap_step(ti, si)
         return
@@ -199,31 +213,55 @@ def pad_press(e, col, row):
         note = eng.grid_pitches(root, scale, e.pattern["in_key"], e.octave)[pitch_index(col, row)]
         if note > 127:
             return
+        rec = {"t0": now, "kind": "pitch", "track": pt, "note": note, "pending": None}
         if e.pitch_held:                       # other pad held: add to selection
             e.armed.add(note)
         elif e.armed == {note} and e.rate_track == pt:
-            e.armed = set()
+            rec["pending"] = "disarm"
         else:
             e.armed = {note}
-        e.pitch_held.add((col, row))
+        e.pad_down[(col, row)] = rec
         e.rate_track = pt
 
 
-def pad_release(e, col, row):
-    e.pitch_held.discard((col, row))
+def pad_release(e, col, row, now=None):
+    now = time.monotonic() if now is None else now
+    rec = e.pad_down.pop((col, row), None)
+    if rec is None or rec["pending"] is None or now - rec["t0"] >= LONG_PRESS_S:
+        return
+    if rec["pending"] == "step":
+        _step_tap(e, rec["track"], rec["step"])
+    elif rec["pending"] == "disarm" and e.armed == {rec["note"]}:
+        e.armed = set()
 
 
-def pad_colors(e):
+def _long_presses(e, now):
+    """(step index, {track: notes}) for the pads held longer than LONG_PRESS_S."""
+    step, notes = None, {}
+    for rec in e.pad_down.values():
+        if now - rec["t0"] < LONG_PRESS_S:
+            continue
+        if rec["kind"] == "step" and step is None:
+            step = rec["step"]
+        elif rec["kind"] == "pitch":
+            notes.setdefault(rec["track"], set()).add(rec["note"])
+    return step, notes
+
+
+def pad_colors(e, now=None):
     """8x8 palette indices, row 0 = bottom."""
+    now = time.monotonic() if now is None else now
     grid = [[OFF] * 8 for _ in range(8)]
     if e.color_picker_track is not None:
         for (row, col), color in eng.color_picker_grid().items():
             grid[row][col] = color
         return grid
+    hl_step, hl_notes = _long_presses(e, now)
     for slot in (0, 1, 2, 3):
         ti = track_for_slot(e, slot)
         if ti is not None:
             t = e.tracks[ti]
+            only = hl_notes.get(ti)             # long-pressed notes of this track: dim the rest
             for i in range(eng.STEPS):
                 col, row = _pad_for_step(slot, i)
                 if i >= t["length"]:
@@ -239,15 +277,17 @@ def pad_colors(e):
                     color = STEP_DIM_WHITE
                 else:
                     color = dim(t["color"])
+                if only and color != PLAYHEAD and not (s["on"] and only & set(s["pitches"])):
+                    color = LONG_PRESS_DIM
                 grid[row][col] = color
             continue
         pt = pitch_track_for_slot(e, slot)
         if pt is not None:
-            _paint_pitch(e, grid, slot, pt)
+            _paint_pitch(e, grid, slot, pt, now, hl_step)
     return grid
 
 
-def _paint_pitch(e, grid, slot, track_idx):
+def _paint_pitch(e, grid, slot, track_idx, now, hl_step=None):
     in_key = e.pattern["in_key"]
     root, scale = e.key_of(track_idx)
     notes = eng.grid_pitches(root, scale, in_key, e.octave)
@@ -255,10 +295,14 @@ def _paint_pitch(e, grid, slot, track_idx):
     t = e.tracks[track_idx]
     color = t["color"]
     # selected = armed (working track only) or in the selected step
-    es = e.sel.get(track_idx)
-    selected = set(t["steps"][es]["pitches"]) if es is not None and t["steps"][es]["on"] else set()
-    if track_idx == e.rate_track:
-        selected |= e.armed
+    if hl_step is not None:                    # long press on a step: show only its notes
+        st = t["steps"][hl_step] if hl_step < t["length"] else None
+        selected = set(st["pitches"]) if st and st["on"] else set()
+    else:
+        es = e.sel.get(track_idx)
+        selected = set(t["steps"][es]["pitches"]) if es is not None and t["steps"][es]["on"] else set()
+        if track_idx == e.rate_track:
+            selected |= e.armed
     col0 = 0 if slot in (0, 2) else 4
     row0 = 4 if slot in (0, 1) else 0
     for i, note in enumerate(notes):
@@ -271,11 +315,11 @@ def _paint_pitch(e, grid, slot, track_idx):
         elif sel:
             grid[r][c] = PITCH_WHITE
         elif in_key or note % 12 in in_scale:
-            grid[r][c] = PITCH_DIM_WHITE
+            grid[r][c] = LONG_PRESS_DIM if hl_step is not None else PITCH_DIM_WHITE
         else:
             grid[r][c] = OFF
     # the pad of a note that just sounded flashes green
-    if time.monotonic() < t["_lit_until"]:
+    if now < t["_lit_until"]:
         for i, note in enumerate(notes):
             if note in t["_lit_notes"] and note <= 127:
                 grid[row0 + i // 4][col0 + i % 4] = PLAYHEAD
