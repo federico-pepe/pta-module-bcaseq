@@ -23,7 +23,7 @@ import view
 SEQUENCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sequences")
 POPUP_DURATION = 1.5
 LED_REFRESH_S = 1.0
-LAYOUT_OSD = ["4 TRACKS", "2 TRACKS + PITCH"]
+LAYOUT_OSD = ["4 TRACKS", "2 TRACKS + PITCH", "3 TRACKS + STEPS"]
 
 
 def send(obj):
@@ -159,7 +159,7 @@ def handle_button(state, data):
             e.set_rate(e.rate_track, name)
             state.show_popup("RATE TRACK %d" % (e.rate_track + 1), name.replace("Scene ", ""))
     elif name in ("Octave Up", "Octave Down"):
-        if e.layout == 1:
+        if layouts.has_octave(e):
             e.shift_octave(1 if name == "Octave Up" else -1)
             state.show_popup("OCTAVE", octave_range_label(e))
     elif name == "Page Left":

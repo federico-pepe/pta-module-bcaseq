@@ -25,7 +25,12 @@ sequencer with switchable pad Layouts. Built from `pta-module-gridseq`.
 - Test: `python3 -m unittest discover -s tests`.
 - Install: in `push-tethered-app`, `go run ./cmd/pushapp -install /path/to/this/repo`, then `-module bcaseq`.
 
+## Notes
+- A step holds `pitches`, a sorted unique list. There is no `step["pitch"]`. Use `engine.toggle_note` to add or remove a note and `engine.note_index(step)` for the selected note (`engine.sel_note`).
+- Layout 3 uses `engine.armed` (track, note) and `engine.grid_track`. Read the grid track with `layouts.grid_track(e)`.
+
 ## Open questions for hardware
+- Layout 3 colors: empty step (`STEP_DIM_WHITE` 118), armed pad (`ARMED` 120, same as in-scale pads), notes of the selected step on the pitch grids (track color). Chord text on the main and edit screens. 3-track column layout.
 - Empty step pad color (124, dgray) and playhead green (126) need a look on the device.
 - Key and scale are global by default (`pattern["scope_global"]`). With Scope = Track each track has its own `root` and `scale`. Always use `engine.key_of(track)`. In Key is always global.
 - Rate is per track. Scene buttons act on `engine.rate_track` (last touched track).

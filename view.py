@@ -76,7 +76,7 @@ def button_colors(state):
 
     out["Page Left"] = BTN_DIM if e.track_page > 0 else BTN_OFF
     out["Page Right"] = BTN_DIM if layouts.can_page_right(e) else BTN_OFF
-    if e.layout == 1:
+    if layouts.has_octave(e):
         out["Octave Up"] = BTN_FULL if held.get("Octave Up") else BTN_DIM
         out["Octave Down"] = BTN_FULL if held.get("Octave Down") else BTN_DIM
     else:
@@ -233,12 +233,18 @@ def knob_value(t, s, label):
     return t[f] if f == "channel" else s[f]
 
 
-def sounding_note(t, now):
-    """The note a track is playing right now, else None. The screen shows no
-    pitch for a note that is not triggered."""
-    if t["_lit_note"] is not None and now < t["_show_until"]:
-        return t["_lit_note"]
-    return None
+def sounding_notes(t, now):
+    """Notes a track is playing right now. The screen shows no pitch for a
+    note that is not triggered."""
+    return t["_lit_notes"] if now < t["_show_until"] else []
+
+
+def fit_scale(text, width):
+    """Biggest text scale (3, 2, 1) that fits the width."""
+    for scale in (3, 2):
+        if CHAR_W * scale * len(text) <= width:
+            return scale
+    return 1
 
 
 def rate_label(t):
@@ -283,9 +289,10 @@ def _sequencer_ops(e):
             t = e.tracks[ti]
             x = slot * col_w
             c = track_color(t["color"])
-            playing = sounding_note(t, now)
-            if playing is not None:
-                ops.append(_text(x + 8, NOTE_BASELINE, note_name(playing), c, 3))
+            playing = sounding_notes(t, now)
+            if playing:
+                text = " ".join(note_name(n) for n in playing)
+                ops.append(_text(x + 8, NOTE_BASELINE, text, c, fit_scale(text, col_w - 16)))
             enc = layouts.slen_encoder(e, slot)
             cx = enc * (W // 8) + (W // 16)
             ops += _gauge(cx, SLEN_Y, c, t["length"], 1, eng.STEPS)
@@ -311,14 +318,19 @@ def _sequencer_ops(e):
         s = display_step(e, ti)
         # The edited track shows the pitch of its selected step when that step plays.
         # Other tracks show the note they are sounding. Nothing else.
+        n_notes = len(s["pitches"])
         if hot:
-            pitch = s["pitch"] if s["on"] else None
+            pitch = s["pitches"][e.note_index(s)] if s["on"] else None
+            text = note_name(pitch) if pitch is not None else None
         else:
-            pitch = sounding_note(t, now)
-        if pitch is not None:
-            ops.append(_text(x + 8, 66, note_name(pitch), c, 3))
-        if hot or pitch is not None:
-            ops.append(_text(x + 8, 80, "PITCH", c))
+            playing = sounding_notes(t, now)
+            text = " ".join(note_name(n) for n in playing) if playing else None
+        if text is not None:
+            # 96 px is the space left of the knobs
+            ops.append(_text(x + 8, 66, text, c, fit_scale(text, 96)))
+        if hot or text is not None:
+            label = "NOTE %d/%d" % (e.note_index(s) + 1, n_notes) if hot and n_notes > 1 else "PITCH"
+            ops.append(_text(x + 8, 80, label, c))
         if hot and shown == 0:
             ops.append(_rect(x + 8, 84, CHAR_W * 5, 2, c))
         spacing = (col_w - 132) // 3
