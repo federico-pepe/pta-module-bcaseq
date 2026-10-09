@@ -7,6 +7,8 @@ between minor versions).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-09
+
 ### Added
 
 - Layout 3: one step grid for the working track and three pitch grids. Press a pitch pad to arm a note. Press a step to add it.
@@ -16,6 +18,7 @@ between minor versions).
 - Scale menu, encoder 6 (Names): sharp or flat spelling for the key, the notes, the octave range and the chords.
 - Working track: a screen-bottom button, a pad, a pitch pad, or the S LEN knob of a track makes it the working track.
 - Long press (Layouts 2 and 3): hold a step pad to light its notes on every pitch grid. Hold a pitch pad to dim the steps that do not play the note.
+- Hold a step pad and tap pitch pads (Layouts 2 and 3): each tap adds or removes the note in the same step of the track of that pad.
 - `CHANGELOG.md`.
 
 ### Changed
@@ -25,3 +28,9 @@ between minor versions).
 - Layout 2 enters notes like Layout 3: arm a note, then press a step. A pitch pad no longer replaces the pitch of the selected step.
 - Pitch pad colors: in-key pads are dim white, the root is a dim track color. A selected pad is bright white, and a selected root is the full track color.
 - Sequence files store `pitches` (a list) for each step. Files that were saved by older builds do not load.
+- The empty step pads (Layouts 2 and 3) and the pads that a long press dims use palette 119 (dark gray).
+- The edit view always shows the `PITCH` label.
+
+### Fixed
+
+- The release tarball now includes `chords.py`. Without it, `view.py` fails to import.

@@ -42,6 +42,8 @@ If you select another track with a screen-bottom button, the armed notes stay ar
 
 In Layouts 2 and 3, a step press acts when you release the pad, and only if you held it for less than 0.4 seconds. Arming a pitch pad acts at once. Pressing the only armed pad again to disarm it acts on release.
 
+To put notes into one step without arming, hold the step pad and tap pitch pads. Each tap adds the note to that step, and a second tap removes it. The note goes to the same step number on the track of the pitch pad. So you can hold step 5 and tap notes on the grids of three tracks. The armed notes do not change. When you release the step pad, the step stays as it is.
+
 If no note is armed, a step pad toggles the step, as in Layout 1. Shift + step pad selects the step and does not change it. Select (main) and a layout change disarm all notes.
 
 The screen shows the selected note of the selected step.

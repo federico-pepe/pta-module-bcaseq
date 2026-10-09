@@ -1369,6 +1369,100 @@ class LongPressTest(unittest.TestCase):
         self.assertFalse(e.tracks[0]["steps"][0]["on"])
 
 
+class HoldStepInputTest(unittest.TestCase):
+    """Hold a step pad and tap pitch pads: the notes go into that step on the track of each pad."""
+
+    def setUp(self):
+        self.e, _ = make()
+        layouts.switch_layout(self.e, 2)
+
+    def pitch_pad(self, note, slot=1):
+        e = self.e
+        track = layouts.first_track(e) + (slot - 1)
+        root, scale = e.key_of(track)
+        i = eng.grid_pitches(root, scale, e.pattern["in_key"], e.octave).index(note)
+        return (0 if slot == 2 else 4) + i % 4, (4 if slot == 1 else 0) + i // 4
+
+    def steps(self, ti, si):
+        return self.e.tracks[ti]["steps"][si]
+
+    def test_notes_tapped_while_holding_go_into_the_held_step(self):
+        e = self.e
+        layouts.pad_press(e, 0, 7, now=1.0)                  # hold step 0
+        tap(e, *self.pitch_pad(64))                          # track 1 grid
+        s = self.steps(0, 0)
+        self.assertEqual((s["on"], s["pitches"]), (True, [64]))
+        tap(e, *self.pitch_pad(67))
+        self.assertEqual(self.steps(0, 0)["pitches"], [64, 67])
+        layouts.pad_release(e, 0, 7, now=1.2)
+        self.assertEqual(self.steps(0, 0)["pitches"], [64, 67])   # releasing does not toggle the step
+        self.assertTrue(self.steps(0, 0)["on"])
+        self.assertEqual(e.armed, set())
+
+    def test_tapping_a_note_again_removes_it(self):
+        e = self.e
+        layouts.pad_press(e, 0, 7, now=1.0)
+        tap(e, *self.pitch_pad(64))
+        tap(e, *self.pitch_pad(64))
+        layouts.pad_release(e, 0, 7, now=1.2)
+        self.assertFalse(self.steps(0, 0)["on"])
+
+    def test_notes_from_other_tracks_go_to_the_same_step_of_that_track(self):
+        e = self.e
+        layouts.pad_press(e, 2, 7, now=1.0)                  # hold step 2 of the working track (1)
+        tap(e, *self.pitch_pad(64, slot=1))                  # track 1
+        tap(e, *self.pitch_pad(67, slot=2))                  # track 2
+        tap(e, *self.pitch_pad(71, slot=3))                  # track 3
+        layouts.pad_release(e, 2, 7, now=1.2)
+        self.assertEqual(self.steps(0, 2)["pitches"], [64])
+        self.assertEqual(self.steps(1, 2)["pitches"], [67])
+        self.assertEqual(self.steps(2, 2)["pitches"], [71])
+        for ti in range(3):
+            self.assertTrue(self.steps(ti, 2)["on"])
+            self.assertFalse(self.steps(ti, 3)["on"])
+
+    def test_armed_notes_are_not_touched(self):
+        e = self.e
+        layouts.pad_press(e, *self.pitch_pad(62), now=0.0)
+        layouts.pad_release(e, *self.pitch_pad(62), now=0.1)
+        layouts.pad_press(e, 0, 7, now=1.0)
+        tap(e, *self.pitch_pad(64))
+        layouts.pad_release(e, 0, 7, now=1.2)
+        self.assertEqual(e.armed, {62})
+
+    def test_a_track_with_a_shorter_sequence_skips_the_step(self):
+        e = self.e
+        e.tracks[1]["length"] = 4
+        layouts.pad_press(e, 0, 7, now=1.0)
+        layouts.pad_press(e, 0, 6, now=1.0)                  # step 4 as well? hold only the last
+        e.pad_down.pop((0, 7))
+        tap(e, *self.pitch_pad(67, slot=2))
+        self.assertFalse(self.steps(1, 4)["on"])
+
+    def test_layout_2_notes_go_to_the_track_of_the_pad(self):
+        e = self.e
+        layouts.switch_layout(e, 1)
+        layouts.pad_press(e, 0, 7, now=1.0)                  # hold step 0 of the first track
+        tap(e, *self.pitch_pad(64, slot=3))                  # BR grid = second track
+        layouts.pad_release(e, 0, 7, now=1.2)
+        self.assertEqual(self.steps(1, 0)["pitches"], [64])
+        self.assertFalse(self.steps(0, 0)["on"])
+
+    def test_the_highlight_shows_the_new_notes(self):
+        e = self.e
+        layouts.pad_press(e, 0, 7, now=1.0)
+        tap(e, *self.pitch_pad(64))
+        grid = layouts.pad_colors(e, now=2.0)
+        c, r = self.pitch_pad(64)
+        self.assertEqual(grid[r][c], layouts.PITCH_WHITE)
+
+    def test_without_a_held_step_a_pitch_tap_still_arms(self):
+        e = self.e
+        tap(e, *self.pitch_pad(64))
+        self.assertEqual(e.armed, {64})
+        self.assertFalse(self.steps(0, 0)["on"])
+
+
 class DefaultsAndButtonsTest(unittest.TestCase):
     def test_default_key_is_c_chromatic(self):
         e, _ = make(scale=None)

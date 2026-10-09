@@ -180,7 +180,8 @@ def _step_tap(e, ti, si):
 
 def pad_press(e, col, row, now=None):
     """Handle a pad press. Shift selects without toggling. In Layouts 2 and 3 a plain
-    step press and a disarm wait for release, so a long press can show a highlight."""
+    step press and a disarm wait for release, so a long press can show a highlight.
+    While a step pad is held, a pitch press edits that step (same step index on the pad's track)."""
     now = time.monotonic() if now is None else now
     if e.color_picker_track is not None:
         color = eng.color_picker_grid().get((row, col))
@@ -212,6 +213,12 @@ def pad_press(e, col, row, now=None):
         root, scale = e.key_of(pt)
         note = eng.grid_pitches(root, scale, e.pattern["in_key"], e.octave)[pitch_index(col, row)]
         if note > 127:
+            return
+        held = next((r for r in e.pad_down.values() if r["kind"] == "step"), None)
+        if held is not None:                   # step pad held: tapped notes go into that step
+            if held["step"] < e.tracks[pt]["length"]:
+                e.toggle_note(pt, held["step"], note, activate=True)
+            held["pending"] = None             # releasing the step pad must not toggle it
             return
         rec = {"t0": now, "kind": "pitch", "track": pt, "note": note, "pending": None}
         if e.pitch_held:                       # other pad held: add to selection
