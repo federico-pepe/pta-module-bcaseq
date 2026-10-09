@@ -108,15 +108,18 @@ def relight(state):
 # -- events ---------------------------------------------------------------------
 
 def handle_pad(state, data):
-    if state.browser_active or not data.get("pressed"):
-        return
-    layouts.pad_press(state.engine, data.get("col"), data.get("row"))
+    col, row = data.get("col"), data.get("row")
+    if not data.get("pressed"):
+        layouts.pad_release(state.engine, col, row)
+    elif not state.browser_active:
+        layouts.pad_press(state.engine, col, row)
 
 
 def octave_range_label(e):
     root, scale = e.key_of(layouts.pitch_ref_track(e))
     notes = [n for n in eng.grid_pitches(root, scale, e.pattern["in_key"], e.octave) if n <= 127]
-    return "%s - %s" % (view.note_name(min(notes)), view.note_name(max(notes)))
+    flats = e.pattern["flats"]
+    return "%s - %s" % (view.note_name(min(notes), flats), view.note_name(max(notes), flats))
 
 
 def handle_button(state, data):

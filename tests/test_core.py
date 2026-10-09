@@ -117,7 +117,7 @@ class EditTest(unittest.TestCase):
         layouts.pad_press(e, 0, 7)        # TL step 0, nothing armed: plain tap
         self.assertEqual(e.tracks[0]["steps"][0]["pitches"], [60])
         layouts.pad_press(e, 5, 4)        # TR quadrant bottom row, index 1 = D3: arm
-        self.assertEqual(e.armed, 62)
+        self.assertEqual(e.armed, {62})
         layouts.pad_press(e, 0, 7)        # step 0 gets D3
         self.assertEqual(e.tracks[0]["steps"][0]["pitches"], [60, 62])
         layouts.pad_press(e, 0, 7)        # and loses it again
@@ -349,8 +349,10 @@ class LastNoteTest(unittest.TestCase):
         e.layout = 1
         layouts.pad_press(e, 0, 7)                    # track 1 step 0
         layouts.pad_press(e, 6, 4)                    # TR pitch pad index 2 -> E3 (64): arm
+        layouts.pad_release(e, 6, 4)
         layouts.pad_press(e, 0, 7)                    # step 0 gets E3: [60, 64]
         layouts.pad_press(e, 6, 4)                    # disarm
+        layouts.pad_release(e, 6, 4)
         layouts.pad_press(e, 1, 7)                    # track 1 step 1: new step
         self.assertEqual(e.tracks[0]["steps"][1]["pitches"], [64])
         layouts.pad_press(e, 0, 3)                    # track 2 step 0: its own memory, still C3
@@ -772,14 +774,50 @@ class ChordDisplayTest(unittest.TestCase):
         t = self.e.tracks[0]
         t["_lit_notes"], t["_show_until"] = [60, 64, 67], _t.monotonic() + 5
         self.assertIn("C3 E3 G3", [s for s, _ in self.texts()])
+        self.assertIn(("C", 3), self.texts())
 
-    def test_edit_view_shows_selected_note_and_position(self):
+    def test_edit_view_unnamed_step_shows_selected_note_big(self):
         layouts.pad_press(self.e, 0, 7)
-        self.e.toggle_note(0, 0, 67)
-        self.assertIn(("G3", 3), self.texts())
-        self.assertIn("NOTE 2/2", [s for s, _ in self.texts()])
+        self.e.toggle_note(0, 0, 61)                    # C3 C#3: no chord name
+        self.assertIn(("C#3", 3), self.texts())
+        self.assertIn("NOTE 2/2 C#3", [s for s, _ in self.texts()])
+        self.assertIn(("C3 C#3", None), self.texts())
         self.e.sel_note = 0
         self.assertIn(("C3", 3), self.texts())
+
+    def test_edit_view_chord_name_is_big_and_notes_small(self):
+        layouts.pad_press(self.e, 0, 7)
+        self.e.toggle_note(0, 0, 64)
+        self.e.toggle_note(0, 0, 67)
+        texts = self.texts()
+        self.assertIn(("C", 3), texts)
+        self.assertIn(("C3 E3 G3", None), texts)
+        self.assertIn("NOTE 3/3 G3", [s for s, _ in texts])
+
+    def test_edit_view_notes_never_pass_the_knobs(self):
+        layouts.pad_press(self.e, 0, 7)
+        for n in (61, 63, 66, 68, 70, 72, 74):
+            self.e.toggle_note(0, 0, n)
+        for s_, _ in self.texts():
+            if s_.startswith("C3 "):
+                self.assertLessEqual(len(s_) * view.CHAR_W, view.EDIT_TEXT_W)
+                self.assertIn("+", s_)
+
+    def test_main_screen_chord_name_big_notes_small(self):
+        import time as _t
+        t = self.e.tracks[0]
+        t["_lit_notes"], t["_show_until"] = [60, 64, 67, 71], _t.monotonic() + 5
+        texts = self.texts()
+        self.assertIn(("Cmaj7", 3), texts)
+        self.assertIn(("C3 E3 G3 B3", None), texts)
+
+    def test_main_screen_text_stays_left_of_the_knob(self):
+        import time as _t
+        t = self.e.tracks[0]
+        t["_lit_notes"], t["_show_until"] = [60, 61, 62, 63, 64, 65], _t.monotonic() + 5    # no name
+        for s_, sc in self.texts():
+            if s_.startswith("C3"):
+                self.assertLessEqual(len(s_) * view.CHAR_W * (sc or 1), view.MAIN_TEXT_W)
 
     def test_edit_view_other_track_shows_chord(self):
         import time as _t
@@ -787,6 +825,26 @@ class ChordDisplayTest(unittest.TestCase):
         t = self.e.tracks[1]
         t["_lit_notes"], t["_show_until"] = [60, 67], _t.monotonic() + 5
         self.assertIn("C3 G3", [s for s, _ in self.texts()])
+
+    def test_main_screen_shows_chord_name(self):
+        import time as _t
+        t = self.e.tracks[0]
+        t["_lit_notes"], t["_show_until"] = [60, 64, 67, 71], _t.monotonic() + 5
+        self.assertIn("Cmaj7", [s for s, _ in self.texts()])
+        t["_lit_notes"] = [60, 61, 62]                  # no name: only the notes
+        texts = [s for s, _ in self.texts()]
+        self.assertIn("C3 C#3 D3", texts)
+        self.assertNotIn("Cmaj7", texts)
+        self.assertNotIn("C", texts)
+
+    def test_edit_view_shows_chord_name_of_the_step(self):
+        layouts.pad_press(self.e, 0, 7)
+        self.assertNotIn("C", [s for s, _ in self.texts()])    # one note: no name
+        self.e.toggle_note(0, 0, 64)
+        self.e.toggle_note(0, 0, 67)
+        self.assertIn("C", [s for s, _ in self.texts()])
+        self.e.sel_note = 0                                    # the name is for the whole step
+        self.assertIn("C", [s for s, _ in self.texts()])
 
     def test_single_note_keeps_pitch_label(self):
         layouts.pad_press(self.e, 0, 7)
@@ -828,12 +886,14 @@ class Layout3Test(unittest.TestCase):
     def test_arm_then_step_adds_note_to_grid_track(self):
         e = self.e
         layouts.pad_press(e, *self.pitch_pad(2, 64))      # slot 2 = second track
-        self.assertEqual(e.armed, 64)
+        layouts.pad_release(e, *self.pitch_pad(2, 64))
+        self.assertEqual(e.armed, {64})
         self.assertEqual(e.rate_track, 1)
         layouts.pad_press(e, 0, 7)                        # step 0
         s = e.tracks[1]["steps"][0]
         self.assertEqual((s["on"], s["pitches"]), (True, [64]))
-        layouts.pad_press(e, *self.pitch_pad(2, 67))
+        layouts.pad_press(e, *self.pitch_pad(2, 67))      # a new single press replaces the selection
+        layouts.pad_release(e, *self.pitch_pad(2, 67))
         layouts.pad_press(e, 0, 7)
         self.assertEqual(s["pitches"], [64, 67])
         layouts.pad_press(e, 0, 7)                        # armed 67 again: removes it
@@ -844,8 +904,10 @@ class Layout3Test(unittest.TestCase):
         e = self.e
         pad = self.pitch_pad(1, 64)
         layouts.pad_press(e, *pad)
+        layouts.pad_release(e, *pad)
         layouts.pad_press(e, *pad)
-        self.assertIsNone(e.armed)
+        layouts.pad_release(e, *pad)
+        self.assertEqual(e.armed, set())
         layouts.pad_press(e, 0, 7)                        # nothing armed: plain tap
         self.assertEqual(e.tracks[e.rate_track]["steps"][0]["pitches"], [eng.DEFAULT_PITCH])
 
@@ -861,7 +923,7 @@ class Layout3Test(unittest.TestCase):
         e = self.e
         layouts.pad_press(e, *self.pitch_pad(1, 64))
         layouts.switch_layout(e, 0)
-        self.assertIsNone(e.armed)
+        self.assertEqual(e.armed, set())
         layouts.pad_press(e, 0, 7)                        # Layout 1 TL: plain tap
         self.assertEqual(e.tracks[0]["steps"][0]["pitches"], [eng.DEFAULT_PITCH])
 
@@ -913,7 +975,7 @@ class Layout3Test(unittest.TestCase):
         layouts.pad_press(e, *self.pitch_pad(1, 64))      # arm E on track 1
         e.select_track(1)                                 # screen-bottom button: track 2
         layouts.pad_press(e, 0, 7)
-        self.assertEqual(e.armed, 64)
+        self.assertEqual(e.armed, {64})
         self.assertEqual(e.tracks[1]["steps"][0]["pitches"], [64])
         self.assertFalse(e.tracks[0]["steps"][0]["on"])
 
@@ -948,7 +1010,7 @@ class Layout3Test(unittest.TestCase):
                 self.assertEqual(grid[r][c], layouts.OFF)
         layouts.pad_press(e, 0, 0)                        # empty grids: no crash, nothing armed
         layouts.pad_press(e, 4, 0)
-        self.assertIsNone(e.armed)
+        self.assertEqual(e.armed, set())
 
     def test_octave_buttons_active_in_layout_3(self):
         self.assertTrue(layouts.has_octave(self.e))
@@ -970,6 +1032,181 @@ class Layout3Test(unittest.TestCase):
         for idx in range(8):
             ti = layouts.slen_track(self.e, idx)
             self.assertTrue(ti is None or ti in layouts.screen_tracks(self.e))
+
+
+class AccidentalsTest(unittest.TestCase):
+    def setUp(self):
+        class S:
+            pass
+        self.st = S()
+        self.st.engine, _ = make()
+        self.e = self.st.engine
+        self.st.button_held, self.st.browser_active, self.st.browser_names, self.st.browser_cursor = {}, False, [], 0
+        self.st.popup_title = self.st.popup_body = None
+        self.st.popup_until = 0
+
+    def texts(self):
+        return [o["params"]["s"] for o in view.draw(self.st)["ops"] if o["kind"] == "text"]
+
+    def test_default_is_sharps_and_encoder_6_switches(self):
+        e = self.e
+        self.assertFalse(e.pattern["flats"])
+        e.nudge_scale_menu(5, 4)
+        self.assertTrue(e.pattern["flats"])
+        e.nudge_scale_menu(5, -4)
+        self.assertFalse(e.pattern["flats"])
+
+    def test_persists(self):
+        self.e.nudge_scale_menu(5, 4)
+        e2, _ = make()
+        self.assertTrue(e2.load(self.e.to_doc()))
+        self.assertTrue(e2.pattern["flats"])
+
+    def test_note_name_spelling(self):
+        self.assertEqual(view.note_name(61), "C#3")
+        self.assertEqual(view.note_name(61, flats=True), "Db3")
+
+    def test_scale_menu_shows_the_switch(self):
+        self.e.scale_menu = True
+        self.assertIn("Sharp", self.texts())
+        self.e.nudge_scale_menu(5, 4)
+        self.assertIn("Flat", self.texts())
+        self.assertIn("Names", self.texts())
+
+    def test_key_and_notes_follow_the_switch(self):
+        e = self.e
+        e.nudge_scale_menu(0, 4)                          # root C#
+        self.assertTrue(any("C# " in t for t in self.texts()))
+        e.nudge_scale_menu(5, 4)
+        self.assertTrue(any("Db " in t for t in self.texts()))
+
+    def test_chord_names_follow_the_switch(self):
+        import time as _t
+        e = self.e
+        t = e.tracks[0]
+        t["_lit_notes"], t["_show_until"] = [61, 65, 68], _t.monotonic() + 5
+        self.assertIn("C#", self.texts())
+        e.nudge_scale_menu(5, 4)
+        self.assertIn("Db", self.texts())
+
+
+class MultiNoteArmTest(unittest.TestCase):
+    """Hold several pitch pads, then tap steps: all of the notes go in together."""
+
+    def setUp(self):
+        self.e, _ = make()
+        layouts.switch_layout(self.e, 2)
+
+    def pad(self, note, slot=1):
+        e = self.e
+        track = layouts.first_track(e) + (slot - 1)
+        root, scale = e.key_of(track)
+        i = eng.grid_pitches(root, scale, e.pattern["in_key"], e.octave).index(note)
+        return (0 if slot == 2 else 4) + i % 4, (4 if slot == 1 else 0) + i // 4
+
+    def hold(self, *notes):
+        for n in notes:
+            layouts.pad_press(self.e, *self.pad(n))
+
+    def release(self, *notes):
+        for n in notes:
+            layouts.pad_release(self.e, *self.pad(n))
+
+    def test_holding_pads_arms_all_of_them(self):
+        self.hold(60, 64, 67)
+        self.assertEqual(self.e.armed, {60, 64, 67})
+
+    def test_selection_stays_armed_after_release(self):
+        self.hold(60, 64, 67)
+        self.release(60, 64, 67)
+        self.assertEqual(self.e.armed, {60, 64, 67})
+        self.assertEqual(self.e.pitch_held, set())
+
+    def test_new_single_press_replaces_the_selection(self):
+        self.hold(60, 64)
+        self.release(60, 64)
+        self.hold(67)
+        self.assertEqual(self.e.armed, {67})
+
+    def test_pressing_the_only_armed_pad_disarms(self):
+        self.hold(64)
+        self.release(64)
+        self.hold(64)
+        self.assertEqual(self.e.armed, set())
+
+    def test_step_gets_all_notes_at_once(self):
+        e = self.e
+        self.hold(60, 64, 67)
+        layouts.pad_press(e, 0, 7)                        # while the pads are still down
+        s = e.tracks[0]["steps"][0]
+        self.assertEqual((s["on"], s["pitches"]), (True, [60, 64, 67]))
+        self.release(60, 64, 67)
+        layouts.pad_press(e, 1, 7)                        # the selection is still armed
+        self.assertEqual(e.tracks[0]["steps"][1]["pitches"], [60, 64, 67])
+
+    def test_second_tap_removes_every_armed_note(self):
+        e = self.e
+        self.hold(60, 64, 67)
+        layouts.pad_press(e, 0, 7)
+        layouts.pad_press(e, 0, 7)
+        s = e.tracks[0]["steps"][0]
+        self.assertFalse(s["on"])
+        self.assertNotIn(0, e.sel)
+
+    def test_removing_keeps_the_notes_that_are_not_armed(self):
+        e = self.e
+        self.hold(60, 64, 67)
+        layouts.pad_press(e, 0, 7)
+        self.release(60, 64, 67)
+        self.hold(64, 67)
+        layouts.pad_press(e, 0, 7)
+        self.assertEqual(e.tracks[0]["steps"][0]["pitches"], [60])
+        self.assertTrue(e.tracks[0]["steps"][0]["on"])
+
+    def test_partial_overlap_adds_the_missing_notes(self):
+        e = self.e
+        self.hold(60, 64)
+        layouts.pad_press(e, 0, 7)
+        self.release(60, 64)
+        self.hold(64, 67)
+        layouts.pad_press(e, 0, 7)
+        self.assertEqual(e.tracks[0]["steps"][0]["pitches"], [60, 64, 67])
+
+    def test_all_armed_notes_are_bright_on_the_grid(self):
+        e = self.e
+        self.hold(62, 64)
+        grid = layouts.pad_colors(e)
+        for n in (62, 64):
+            c, r = self.pad(n)
+            self.assertEqual(grid[r][c], layouts.PITCH_WHITE)
+        c, r = self.pad(65)
+        self.assertEqual(grid[r][c], layouts.PITCH_DIM_WHITE)
+
+    def test_pads_from_two_grids_add_together(self):
+        self.hold(60)
+        layouts.pad_press(self.e, *self.pad(64, slot=2))
+        self.assertEqual(self.e.armed, {60, 64})
+
+    def test_switching_layout_forgets_held_pads(self):
+        self.hold(60, 64)
+        layouts.switch_layout(self.e, 1)
+        self.assertEqual((self.e.armed, self.e.pitch_held), (set(), set()))
+
+    def test_run_passes_pad_releases(self):
+        import run
+        class S:
+            pass
+        st = S()
+        st.engine, st.browser_active = self.e, False
+        col, row = self.pad(60)
+        run.handle_pad(st, {"col": col, "row": row, "pressed": True})
+        self.assertEqual(len(self.e.pitch_held), 1)
+        run.handle_pad(st, {"col": col, "row": row, "pressed": False})
+        self.assertEqual(self.e.pitch_held, set())
+        st.browser_active = True
+        run.handle_pad(st, {"col": col, "row": row, "pressed": True})
+        run.handle_pad(st, {"col": col, "row": row, "pressed": False})
+        self.assertEqual(self.e.pitch_held, set())
 
 
 class DefaultsAndButtonsTest(unittest.TestCase):

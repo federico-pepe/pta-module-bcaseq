@@ -156,6 +156,7 @@ def default_pattern():
         "bpm": DEFAULT_BPM,
         "root": 0, "scale": DEFAULT_SCALE, "in_key": True,
         "scope_global": True,   # True: one key/scale for all tracks. False: each track has its own.
+        "flats": False,         # note names: False = sharps (C#), True = flats (Db)
         "tracks": [new_track(i) for i in range(DEFAULT_TRACK_COUNT)],
     }
 
@@ -207,7 +208,8 @@ class Engine:
         self.edit_track = None       # track index being edited, or None
         self.sel = {}                # track index -> selected step index
         self.sel_note = 0            # index of the selected note inside the selected step
-        self.armed = None            # Layouts 2 and 3: note number waiting for a step pad
+        self.armed = set()           # Layouts 2 and 3: notes waiting for a step pad
+        self.pitch_held = set()      # (col, row) of pitch pads that are down now
 
         self.accent_on = False
         self.repeat_on = False
@@ -275,7 +277,7 @@ class Engine:
         self.scale_menu = False
         self.color_picker_track = None
         self.active_param = None
-        self.armed = None
+        self.armed = set()
         self.sel_note = 0
         self.friction.reset()
 
@@ -337,6 +339,7 @@ class Engine:
             out["scale"] = pat["scale"]
         out["in_key"] = bool(pat.get("in_key", True))
         out["scope_global"] = bool(pat.get("scope_global", True))
+        out["flats"] = bool(pat.get("flats", False))
         tracks = []
         for i, saved in enumerate((pat.get("tracks") or [])[:MAX_TRACKS]):
             if not isinstance(saved, dict):
@@ -365,21 +368,22 @@ class Engine:
         self.stop()
         self.pattern = out
         self.edit_track, self.sel, self.track_page, self.rate_track = None, {}, 0, 0
-        self.sel_note, self.armed = 0, None
+        self.sel_note, self.armed = 0, set()
         return True
 
     def new_pattern(self):
         self.stop()
         self.pattern = default_pattern()
         self.edit_track, self.sel, self.track_page, self.rate_track = None, {}, 0, 0
-        self.sel_note, self.armed = 0, None
+        self.sel_note, self.armed = 0, set()
 
     def to_doc(self):
         p = self.pattern
         tracks = [{k: v for k, v in t.items() if not k.startswith("_")} for t in p["tracks"]]
         return {"version": 1, "pattern": {
             "bpm": p["bpm"], "root": p["root"], "scale": p["scale"],
-            "in_key": p["in_key"], "scope_global": p["scope_global"], "tracks": tracks}}
+            "in_key": p["in_key"], "scope_global": p["scope_global"], "flats": p["flats"],
+            "tracks": tracks}}
 
     # -- step editing ----------------------------------------------------------
 
@@ -431,33 +435,37 @@ class Engine:
         return max(0, min(self.sel_note, len(step["pitches"]) - 1))
 
     def toggle_note(self, track_idx, step_idx, note, activate=False):
-        """Add a note to a step, or remove it when it is already there. Removing
-        the last note turns the step off. An off step takes just this note;
-        activate=True also turns it on with the Accent and Repeat defaults."""
-        if not (0 <= step_idx < STEPS):
+        self.toggle_notes(track_idx, step_idx, [note], activate)
+
+    def toggle_notes(self, track_idx, step_idx, notes, activate=False):
+        """Add notes to a step. Step on and has all of them: remove them. Last note
+        gone: step off. Step off: it takes just these notes, activate=True turns it on."""
+        if not (0 <= step_idx < STEPS) or not notes:
             return
-        note = max(0, min(127, note))
+        notes = sorted({max(0, min(127, n)) for n in notes})
         s = self.tracks[track_idx]["steps"][step_idx]
         at = 0
-        if s["on"] and note in s["pitches"]:
-            if len(s["pitches"]) == 1:
+        if s["on"] and all(n in s["pitches"] for n in notes):
+            keep = [n for n in s["pitches"] if n not in notes]
+            if not keep:
                 s["on"] = False
                 self.deselect(track_idx)
                 return
-            at = s["pitches"].index(note)
-            s["pitches"].remove(note)
+            at = s["pitches"].index(notes[0])
+            s["pitches"] = keep
         else:
             if s["on"]:
-                s["pitches"] = sorted(s["pitches"] + [note])
+                s["pitches"] = sorted(set(s["pitches"]) | set(notes))
             else:
-                s["pitches"] = [note]
+                s["pitches"] = notes
                 if activate:
                     s["on"] = True
                     self._entry_defaults(s)
-            self._remember_pitch(track_idx, s, note)
+            self._remember_pitch(track_idx, s, notes[-1])
         if s["on"]:
             self.select_step(track_idx, step_idx)
-            self.sel_note = s["pitches"].index(note) if note in s["pitches"] else min(at, len(s["pitches"]) - 1)
+            last = notes[-1]
+            self.sel_note = s["pitches"].index(last) if last in s["pitches"] else min(at, len(s["pitches"]) - 1)
         else:
             self.sel_note = 0
 
@@ -547,7 +555,7 @@ class Engine:
         else:
             s[STEP_FIELD.get(param, param)] = PARAM_DEFAULT[param]
 
-    # Scale menu encoders: 1 Key, 2 Scale, 4 In Key, 5 Scope. Encoder 3 is unused
+    # Scale menu encoders: 1 Key, 2 Scale, 4 In Key, 5 Scope, 6 Names (sharps or flats). Encoder 3 is unused
     # because the Scale name needs two screen columns.
     def nudge_scale_menu(self, idx, delta):
         p = self.pattern
@@ -569,6 +577,10 @@ class Engine:
             n = self.friction.feed("scope", delta)
             if n:
                 self.set_scope_global(n > 0)
+        elif idx == 5:
+            n = self.friction.feed("flats", delta)
+            if n:
+                p["flats"] = n > 0
         self.octave = min(self.octave, self.max_octave())
 
     def set_scope_global(self, on):

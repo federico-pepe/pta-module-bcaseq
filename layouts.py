@@ -86,8 +86,7 @@ def has_octave(e):
 
 
 def first_track(e):
-    """First track of the pad window. Layout 1 follows the screen page, the others
-    the group (pair or triple) that holds the working track."""
+    """First track on the pads. Layout 1: screen page. Others: group with the working track."""
     lay = current(e)
     if lay is Layout1:
         return e.track_page * SCREEN_TRACKS
@@ -112,8 +111,7 @@ def can_page_right(e):
 
 
 def page_screen(e, direction):
-    """Page Left/Right: move the screen by 4 tracks. The first track of the new
-    page becomes the working track, so the pads follow the screen."""
+    """Page the screen by 4 tracks. First track of new page = working track, pads follow."""
     page = e.track_page + direction
     if page < 0 or (direction > 0 and not can_page_right(e)):
         return
@@ -123,7 +121,8 @@ def page_screen(e, direction):
 
 def switch_layout(e, new):
     e.layout = new % len(LAYOUTS)
-    e.armed = None
+    e.armed = set()
+    e.pitch_held = set()
 
 
 def track_for_slot(e, slot):
@@ -153,8 +152,7 @@ def editing(e):
 
 
 def slen_track(e, enc_idx):
-    """Main screen: each track owns 2 encoders. The second one is its S LEN knob.
-    Returns the track index for that encoder, else None."""
+    """Track whose S LEN knob is encoder enc_idx (2nd of 2 per track), else None."""
     slot, role = divmod(enc_idx, 2)
     page = screen_tracks(e)
     return page[slot] if role == 1 and slot < len(page) else None
@@ -165,8 +163,7 @@ def slen_encoder(e, slot):
 
 
 def pitch_ref_track(e):
-    """Track whose pitch grid the octave OSD describes: the working track if it
-    is on the pads, else the first track there."""
+    """Track the octave popup describes: working track if on the pads, else first."""
     page = pad_tracks(e)
     return e.rate_track if e.rate_track in page else (page[0] if page else 0)
 
@@ -191,8 +188,8 @@ def pad_press(e, col, row):
                 e.deselect(ti)
             else:
                 e.select_step(ti, si)
-        elif current(e).arm_mode and e.armed is not None:
-            e.toggle_note(ti, si, e.armed, activate=True)
+        elif current(e).arm_mode and e.armed:
+            e.toggle_notes(ti, si, sorted(e.armed), activate=True)
         else:
             e.tap_step(ti, si)
         return
@@ -202,8 +199,18 @@ def pad_press(e, col, row):
         note = eng.grid_pitches(root, scale, e.pattern["in_key"], e.octave)[pitch_index(col, row)]
         if note > 127:
             return
-        e.armed = None if (e.armed == note and e.rate_track == pt) else note
+        if e.pitch_held:                       # other pad held: add to selection
+            e.armed.add(note)
+        elif e.armed == {note} and e.rate_track == pt:
+            e.armed = set()
+        else:
+            e.armed = {note}
+        e.pitch_held.add((col, row))
         e.rate_track = pt
+
+
+def pad_release(e, col, row):
+    e.pitch_held.discard((col, row))
 
 
 def pad_colors(e):
@@ -247,11 +254,11 @@ def _paint_pitch(e, grid, slot, track_idx):
     in_scale = set(eng.scale_notes(root, scale))
     t = e.tracks[track_idx]
     color = t["color"]
-    # selected: the armed note on the working track's grid, and the notes of the selected step
+    # selected = armed (working track only) or in the selected step
     es = e.sel.get(track_idx)
     selected = set(t["steps"][es]["pitches"]) if es is not None and t["steps"][es]["on"] else set()
-    if track_idx == e.rate_track and e.armed is not None:
-        selected.add(e.armed)
+    if track_idx == e.rate_track:
+        selected |= e.armed
     col0 = 0 if slot in (0, 2) else 4
     row0 = 4 if slot in (0, 1) else 0
     for i, note in enumerate(notes):
