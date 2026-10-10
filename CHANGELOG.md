@@ -7,6 +7,14 @@ between minor versions).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-10
+
+### Fixed
+
+- Following an external clock: note lengths, offsets and repeats use the BPM of the pattern again, as before 0.3.1. The tempo that 0.3.1 measured from the clock changed from tick to tick and made the timing uneven. The `EXT` marker on the status line is gone.
+- Following an external clock: the tempo wheel does nothing and shows no popup. Without a clock it sets the BPM as before.
+- The clock thread wakes 4 times a second (not 20) while the module follows a clock.
+
 ## [0.3.1] - 2026-10-10
 
 ### Added

@@ -68,7 +68,7 @@ Track colors use the hardware palette for the pads and measured screen colors fo
 ### Lead and follow
 The module has two clock roles. Press the tempo encoder to change the role. The screen shows a popup (`CLOCK LEAD` or `CLOCK FOLLOW`), and the transport stops.
 
-- **Follow** (default): the module follows the MIDI clock that it receives. It measures the tempo of the sender. The status line shows it, for example `120 BPM EXT`, and note lengths follow it. The sender owns the tempo, so the tempo wheel does nothing.
+- **Follow** (default): the module follows the MIDI clock that it receives. The clock sets the speed of the steps. The tempo wheel does nothing while a clock arrives.
 - **Lead**: the module sends MIDI clock (24 ticks per beat), Start, and Stop. It ignores the clock that it receives. The status line shows `120 BPM LEAD`. The tempo wheel changes the BPM, and the DAW follows. Play and Stop on the module start and stop the DAW.
 
 To make Ableton Live follow the module in Lead mode, turn on Sync for the MIDI input port of the module in the Link, Tempo and MIDI settings of Live. Then switch the clock of Live to EXT. I did not test this in Live. The clock comes from a thread, so a busy screen does not delay it. The timing is not the same as a hardware clock.

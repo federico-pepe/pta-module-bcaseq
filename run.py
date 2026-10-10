@@ -150,6 +150,8 @@ def handle_button(state, data):
     if name == "Tempo encoder press":
         if pressed:
             state.show_popup("CLOCK", "LEAD" if e.toggle_lead() else "FOLLOW")
+            if state.clock_out:
+                state.clock_out.rephase()       # start sending at once
         return
     if name == "Shift":
         e.shift = pressed
@@ -262,9 +264,7 @@ def handle_encoder(state, data):
         return
     if name == "Tempo wheel turn":
         e.nudge_tempo(delta)
-        if e.is_externally_synced():
-            state.show_popup("TEMPO", "EXT %d" % round(e.bpm()))   # the sender owns the tempo
-        else:
+        if not e.is_externally_synced():     # following a clock: the popup would show a tempo that does nothing
             state.show_popup("TEMPO", str(e.pattern["bpm"]))
         return
     if idx is None or idx < 0:

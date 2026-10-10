@@ -6,7 +6,6 @@ Every track has 16 steps (one 4x4 pad quadrant) and its own rate.
 
 import random
 import time
-from collections import deque
 
 MAX_TRACKS = 32
 DEFAULT_TRACK_COUNT = 4
@@ -14,7 +13,6 @@ STEPS = 16
 MIN_BPM, MAX_BPM, DEFAULT_BPM = 40, 240, 120
 TICKS_PER_QUARTER = 24
 EXTERNAL_CLOCK_TIMEOUT = 2.0
-EXT_TEMPO_GAP_S = 0.5            # a pause between clock ticks this long starts a new tempo measurement
 FRICTION_THRESHOLD = 4
 
 # Scene buttons, bottom (1/4) to top (1/32t), in beats per step.
@@ -229,8 +227,6 @@ class Engine:
 
         self.lead = False               # True: this module leads (sends clock). False: it follows a clock.
         self.last_ext_clock = None
-        self._ext_times = deque(maxlen=TICKS_PER_QUARTER + 1)   # last beat of clock ticks
-        self.ext_bpm = None             # tempo measured from the external clock, else None
 
     # -- state helpers ---------------------------------------------------------
 
@@ -247,15 +243,9 @@ class Engine:
         if name in DIVISIONS and 0 <= track_idx < len(self.tracks):
             self.tracks[track_idx]["rate"] = name
 
-    def bpm(self):
-        """Tempo now: measured from the external clock while it runs, else the pattern BPM."""
-        if self.ext_bpm is not None and self.is_externally_synced():
-            return self.ext_bpm
-        return self.pattern["bpm"]
-
     def nudge_tempo(self, delta):
         """Tempo wheel: change the BPM. It does nothing while the module follows a clock,
-        because the sender owns the tempo."""
+        because the sender owns the tempo. Leading, it sets the clock."""
         if delta == 0 or self.is_externally_synced():
             return
         self.pattern["bpm"] = max(MIN_BPM, min(MAX_BPM, self.pattern["bpm"] + delta))
@@ -266,12 +256,10 @@ class Engine:
         self.stop()
         self.lead = not self.lead
         self.last_ext_clock = None
-        self._ext_times.clear()
-        self.ext_bpm = None
         return self.lead
 
     def step_duration(self, t):
-        return (60.0 / max(1, self.bpm())) * DIVISIONS[t["rate"]]
+        return (60.0 / max(1, self.pattern["bpm"])) * DIVISIONS[t["rate"]]
 
     def touch_param(self, idx):
         """Remember a knob so the screen shows its value for a moment."""
@@ -698,23 +686,11 @@ class Engine:
                 t["_current_step"] = step_idx
                 self._trigger(idx, step_idx, now)
 
-    def _measure_tempo(self, now):
-        """One beat (24 ticks) of clock gives the tempo. A long gap starts over."""
-        if self.last_ext_clock is not None and now - self.last_ext_clock > EXT_TEMPO_GAP_S:
-            self._ext_times.clear()
-            self.ext_bpm = None
-        self._ext_times.append(now)
-        if len(self._ext_times) == self._ext_times.maxlen:
-            span = self._ext_times[-1] - self._ext_times[0]
-            bpm = 60.0 / span if span > 0 else 0
-            self.ext_bpm = bpm if MIN_BPM <= bpm <= MAX_BPM else None
-
     def on_external_clock_byte(self, b, now=None):
         if self.lead:
             return                      # leading: the incoming clock and transport are ignored
         now = time.monotonic() if now is None else now
         if b == 0xF8:
-            self._measure_tempo(now)
             self.last_ext_clock = now
             if not self.playing:
                 return
