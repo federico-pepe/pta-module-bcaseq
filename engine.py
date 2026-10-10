@@ -6,6 +6,7 @@ Every track has 16 steps (one 4x4 pad quadrant) and its own rate.
 
 import random
 import time
+from collections import deque
 
 MAX_TRACKS = 32
 DEFAULT_TRACK_COUNT = 4
@@ -13,6 +14,7 @@ STEPS = 16
 MIN_BPM, MAX_BPM, DEFAULT_BPM = 40, 240, 120
 TICKS_PER_QUARTER = 24
 EXTERNAL_CLOCK_TIMEOUT = 2.0
+EXT_TEMPO_GAP_S = 0.5            # a pause between clock ticks this long starts a new tempo measurement
 FRICTION_THRESHOLD = 4
 
 # Scene buttons, bottom (1/4) to top (1/32t), in beats per step.
@@ -66,17 +68,18 @@ SCALE_LABELS = {
 TRACK_COLORS = [1, 2, 3, 4, 6, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 26, 25]
 TRACK_COLOR_STEP = 3  # coprime with len(TRACK_COLORS)
 
-# Encoder index -> step parameter. "channel" belongs to the track. "note_length" is
-# how many steps the note lasts. The length of the sequence is set on the main
-# screen (nudge_track_length).
-PARAMS = ["pitch", "velocity", "gate", "probability", "offset", "channel", "repeat", "note_length"]
+# Encoder index -> step parameter. "note_length" is how many steps the note lasts.
+# The length of the sequence and the MIDI channel of a track are set on the main
+# screen (nudge_track_length, nudge_channel).
+PARAMS = ["pitch", "velocity", "gate", "probability", "offset", "repeat", "note_length"]
 STEP_FIELD = {"velocity": "vel", "probability": "prob", "note_length": "len"}
-THROTTLED = ("pitch", "offset", "channel", "repeat", "note_length")
+THROTTLED = ("pitch", "offset", "repeat", "note_length")
 PARAM_RANGE = {
     "velocity": (1, 127), "gate": (2, 99), "probability": (0, 100),
     "offset": (-45, 45), "repeat": (1, MAX_REPEAT), "pitch": (0, 127),
-    "channel": (1, 16), "note_length": (1, STEPS),
+    "note_length": (1, STEPS),
 }
+CHANNEL_RANGE = (1, 16)
 PARAM_DEFAULT = {"velocity": 100, "gate": 50, "probability": 100, "offset": 0, "repeat": 1,
                  "note_length": 1}
 
@@ -187,9 +190,10 @@ def max_octave(root, scale, in_key):
 
 
 class Engine:
-    def __init__(self, send_note, note_off, send_cc=None, log=None):
+    def __init__(self, send_note, note_off, send_transport=None, log=None):
         self._send_note = send_note
         self._note_off = note_off
+        self._send_transport = send_transport   # called with "start" or "stop" while leading
         self._log = log or (lambda m: None)
 
         self.pattern = default_pattern()
@@ -223,7 +227,10 @@ class Engine:
         self.delete = False
         self.scale_menu = False
 
+        self.lead = False               # True: this module leads (sends clock). False: it follows a clock.
         self.last_ext_clock = None
+        self._ext_times = deque(maxlen=TICKS_PER_QUARTER + 1)   # last beat of clock ticks
+        self.ext_bpm = None             # tempo measured from the external clock, else None
 
     # -- state helpers ---------------------------------------------------------
 
@@ -240,8 +247,31 @@ class Engine:
         if name in DIVISIONS and 0 <= track_idx < len(self.tracks):
             self.tracks[track_idx]["rate"] = name
 
+    def bpm(self):
+        """Tempo now: measured from the external clock while it runs, else the pattern BPM."""
+        if self.ext_bpm is not None and self.is_externally_synced():
+            return self.ext_bpm
+        return self.pattern["bpm"]
+
+    def nudge_tempo(self, delta):
+        """Tempo wheel: change the BPM. It does nothing while the module follows a clock,
+        because the sender owns the tempo."""
+        if delta == 0 or self.is_externally_synced():
+            return
+        self.pattern["bpm"] = max(MIN_BPM, min(MAX_BPM, self.pattern["bpm"] + delta))
+
+    def toggle_lead(self):
+        """Tempo encoder press: lead (send clock, ignore incoming clock) or follow.
+        The transport stops, so Start and Stop never get out of step. Returns the new role."""
+        self.stop()
+        self.lead = not self.lead
+        self.last_ext_clock = None
+        self._ext_times.clear()
+        self.ext_bpm = None
+        return self.lead
+
     def step_duration(self, t):
-        return (60.0 / max(1, self.pattern["bpm"])) * DIVISIONS[t["rate"]]
+        return (60.0 / max(1, self.bpm())) * DIVISIONS[t["rate"]]
 
     def touch_param(self, idx):
         """Remember a knob so the screen shows its value for a moment."""
@@ -524,12 +554,24 @@ class Engine:
                 note = self._free_step(note, 1 if n > 0 else -1, taken, ti)
             self._set_selected_note(s, note)
             self._remember_pitch(ti, s, note)
-        elif param == "channel":
-            t["channel"] = max(lo, min(hi, t["channel"] + n))
         else:
             field = STEP_FIELD.get(param, param)
             s[field] = max(lo, min(hi, s[field] + n))
         return True
+
+    def nudge_channel(self, track_idx, delta, enc_idx):
+        """Main screen MIDI knob: MIDI channel of one track."""
+        if not (0 <= track_idx < len(self.tracks)) or delta == 0:
+            return
+        self.touch_param(enc_idx)
+        n = self.friction.feed(("channel", track_idx), delta, FRICTION_THRESHOLD)
+        t = self.tracks[track_idx]
+        t["channel"] = max(CHANNEL_RANGE[0], min(CHANNEL_RANGE[1], t["channel"] + n))
+
+    def reset_channel(self, track_idx, enc_idx):
+        if 0 <= track_idx < len(self.tracks):
+            self.touch_param(enc_idx)
+            self.tracks[track_idx]["channel"] = CHANNEL_RANGE[0]
 
     def nudge_track_length(self, track_idx, delta, enc_idx):
         """Main screen S LEN knob: length of the sequence of one track."""
@@ -555,8 +597,6 @@ class Engine:
             note = self.default_pitch(ti)
             if note not in s["pitches"]:
                 self._set_selected_note(s, note)
-        elif param == "channel":
-            t["channel"] = 1
         else:
             s[STEP_FIELD.get(param, param)] = PARAM_DEFAULT[param]
 
@@ -612,6 +652,8 @@ class Engine:
         self.stop() if self.playing else self.start()
 
     def start(self):
+        if self.lead and self._send_transport:
+            self._send_transport("start")
         self.playing = True
         self.play_start = time.monotonic()
         self._last_tick = self.play_start
@@ -621,6 +663,8 @@ class Engine:
             t["_progress"] = 0.0
 
     def stop(self):
+        if self.lead and self.playing and self._send_transport:
+            self._send_transport("stop")
         self.playing = False
         self._release_all()
         for t in self.tracks:
@@ -629,9 +673,10 @@ class Engine:
             t["_lit_notes"] = []
             t["_show_until"] = 0.0
 
-    def is_externally_synced(self):
-        return self.last_ext_clock is not None and \
-            (time.monotonic() - self.last_ext_clock) < EXTERNAL_CLOCK_TIMEOUT
+    def is_externally_synced(self, now=None):
+        now = time.monotonic() if now is None else now
+        return not self.lead and self.last_ext_clock is not None and \
+            (now - self.last_ext_clock) < EXTERNAL_CLOCK_TIMEOUT
 
     @staticmethod
     def ticks_per_step(t):
@@ -653,9 +698,23 @@ class Engine:
                 t["_current_step"] = step_idx
                 self._trigger(idx, step_idx, now)
 
-    def on_external_clock_byte(self, b):
-        now = time.monotonic()
+    def _measure_tempo(self, now):
+        """One beat (24 ticks) of clock gives the tempo. A long gap starts over."""
+        if self.last_ext_clock is not None and now - self.last_ext_clock > EXT_TEMPO_GAP_S:
+            self._ext_times.clear()
+            self.ext_bpm = None
+        self._ext_times.append(now)
+        if len(self._ext_times) == self._ext_times.maxlen:
+            span = self._ext_times[-1] - self._ext_times[0]
+            bpm = 60.0 / span if span > 0 else 0
+            self.ext_bpm = bpm if MIN_BPM <= bpm <= MAX_BPM else None
+
+    def on_external_clock_byte(self, b, now=None):
+        if self.lead:
+            return                      # leading: the incoming clock and transport are ignored
+        now = time.monotonic() if now is None else now
         if b == 0xF8:
+            self._measure_tempo(now)
             self.last_ext_clock = now
             if not self.playing:
                 return

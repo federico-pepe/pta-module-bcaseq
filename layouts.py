@@ -160,6 +160,13 @@ def slen_track(e, enc_idx):
     return page[slot] if role == 1 and slot < len(page) else None
 
 
+def channel_track(e, enc_idx):
+    """Track whose MIDI channel knob is encoder enc_idx (1st of 2 per track), else None."""
+    slot, role = divmod(enc_idx, 2)
+    page = screen_tracks(e)
+    return page[slot] if role == 0 and slot < len(page) else None
+
+
 def slen_encoder(e, slot):
     return slot * 2 + 1
 

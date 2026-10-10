@@ -10,12 +10,15 @@ once per LED_REFRESH_S because Push can drop LED writes.
 
 import base64
 import copy
+import itertools
 import json
 import os
 import re
 import sys
+import threading
 import time
 
+import clockout
 import engine as eng
 import layouts
 import view
@@ -26,9 +29,13 @@ LED_REFRESH_S = 1.0
 LAYOUT_OSD = ["4 TRACKS", "2 TRACKS + PITCH", "3 TRACKS + STEPS"]
 
 
+_send_lock = threading.Lock()    # the clock thread writes to stdout too
+
+
 def send(obj):
-    sys.stdout.write(json.dumps(obj) + "\n")
-    sys.stdout.flush()
+    with _send_lock:
+        sys.stdout.write(json.dumps(obj) + "\n")
+        sys.stdout.flush()
 
 
 def respond(id_, result):
@@ -50,7 +57,8 @@ def pad_note(col, row):
 
 class State:
     def __init__(self):
-        self.engine = eng.Engine(send_note=self.send_note, note_off=self.note_off, log=self.log)
+        self.engine = eng.Engine(send_note=self.send_note, note_off=self.note_off,
+                                 send_transport=self.send_transport, log=self.log)
         self.last_pad_colors = None
         self.last_button_colors = None
         self.last_refresh = 0.0
@@ -62,18 +70,28 @@ class State:
         self.browser_active = False
         self.browser_names = []
         self.browser_cursor = 0
-        self._next_id = 1000
+        self._next_id = itertools.count(1000)
+        self.clock_out = None
+        self._last_fail_log = 0.0
 
     def show_popup(self, title, body=None):
         self.popup_title, self.popup_body = title, body
         self.popup_until = time.monotonic() + POPUP_DURATION
 
     def request(self, method, params):
-        self._next_id += 1
-        send({"id": self._next_id, "method": method, "params": params})
+        send({"id": next(self._next_id), "method": method, "params": params})
 
     def send_note(self, ch, note, vel):
         self.request("send_note", {"ch": ch, "note": note, "vel": vel})
+
+    def send_transport(self, name):
+        """Lead mode: MIDI Start or Stop out. The clock thread restarts its beat on Start."""
+        self.request("send_" + name, {})
+        if name == "start" and self.clock_out:
+            self.clock_out.rephase()
+
+    def send_clock(self):
+        self.request("send_clock", {})
 
     def note_off(self, ch, note):
         self.request("note_off", {"ch": ch, "note": note})
@@ -129,6 +147,10 @@ def handle_button(state, data):
     if name in view.BUTTON_CC:
         state.button_held[name] = pressed
 
+    if name == "Tempo encoder press":
+        if pressed:
+            state.show_popup("CLOCK", "LEAD" if e.toggle_lead() else "FOLLOW")
+        return
     if name == "Shift":
         e.shift = pressed
         if not pressed:
@@ -239,9 +261,11 @@ def handle_encoder(state, data):
             state.browser_cursor = max(0, min(len(state.browser_names), state.browser_cursor + step))
         return
     if name == "Tempo wheel turn":
-        bpm = e.pattern["bpm"] + delta
-        e.pattern["bpm"] = max(eng.MIN_BPM, min(eng.MAX_BPM, bpm))
-        state.show_popup("TEMPO", str(e.pattern["bpm"]))
+        e.nudge_tempo(delta)
+        if e.is_externally_synced():
+            state.show_popup("TEMPO", "EXT %d" % round(e.bpm()))   # the sender owns the tempo
+        else:
+            state.show_popup("TEMPO", str(e.pattern["bpm"]))
         return
     if idx is None or idx < 0:
         return
@@ -255,6 +279,11 @@ def handle_encoder(state, data):
     if ti is not None:
         e.rate_track = ti                    # the pads follow the knob
         e.nudge_track_length(ti, delta, idx)
+        return
+    ti = layouts.channel_track(e, idx)
+    if ti is not None:
+        e.rate_track = ti
+        e.nudge_channel(ti, delta, idx)
 
 
 _TOUCH_RE = re.compile(r"^Encoder (\d) touch$")
@@ -279,6 +308,13 @@ def handle_touch(state, data):
         e.touch_param(idx)
         if e.delete:
             e.reset_track_length(ti, idx)
+        return
+    ti = layouts.channel_track(e, idx)
+    if ti is not None:
+        e.rate_track = ti
+        e.touch_param(idx)
+        if e.delete:
+            e.reset_channel(ti, idx)
 
 
 def handle_external_midi(state, data):
@@ -342,6 +378,8 @@ def confirm_browser(state):
 
 def main():
     state = State()
+    state.clock_out = clockout.ClockOut(state.engine, state.send_clock)
+    state.clock_out.start()
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -354,7 +392,8 @@ def main():
         params = env.get("params") or {}
 
         if method is None and id_ is not None:
-            if "error" in env:
+            if "error" in env and time.monotonic() - state._last_fail_log > 5.0:   # clock ticks can fail 96 times a second
+                state._last_fail_log = time.monotonic()
                 state.log("bcaseq: request %s failed: %s" % (id_, env["error"]))
             continue
 
@@ -371,6 +410,7 @@ def main():
             relight(state)
             respond(id_, view.draw(state))
         elif method == "close":
+            state.clock_out.stop()
             state.engine.stop()
             for row in range(8):
                 for col in range(8):

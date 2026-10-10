@@ -14,11 +14,11 @@ sequencer shows on the pads and screen. The functions stay the same.
 - **Screen**: the screen always shows 4 tracks in 4 columns, in every layout. S LEN is the second knob of each track.
 - **Screen-bottom buttons**: select a track (the working track). Shift + button: pick a track color with the border pads. Release Shift to leave the picker.
 - **Scale**: menu. Encoder 1 = key, 2 = scale, 4 = In Key on/off, 5 = Scope, 6 = Names (Sharp or Flat). Names changes the spelling of the key, the notes, the octave range, and the chords (C# or Db). Scope Global: all tracks share one key and scale. Scope Track: each track has its own, and the menu edits the last touched track (switching to Track copies the global key to every track). In Key is always global.
-- **Tempo wheel**: BPM. **Play**: start/stop. **Save / Set**: save and load sequences.
+- **Tempo wheel**: BPM. Press the tempo encoder to lead or follow a MIDI clock (see "Lead and follow" below). **Play**: start/stop. **Save / Set**: save and load sequences.
 
 ### Layout 1
 Four 4x4 quadrants, one track each. Empty steps are a dim version of the track color. Steps that are on use the full track color. The selected step is white. The playhead is green. Steps run left to right, then down. Tap a pad to toggle a step
-and edit it. Shift + pad selects without toggling. Edit encoders 1-8: Pitch (big), then gauge knobs for VEL, GATE, PROB, OFF, MIDI, REP, N LEN. N LEN is the length of the selected note in steps. The note holds for that many steps, and later steps can still trigger. All tracks stay visible. The edited track is white with corners. When you touch or turn a knob, its value replaces the name under it. Delete + touch resets a parameter.
+and edit it. Shift + pad selects without toggling. Edit encoders 1-7: Pitch (big), then gauge knobs for VEL, GATE, PROB, OFF, REP, N LEN. N LEN is the length of the selected note in steps. The note holds for that many steps, and later steps can still trigger. All tracks stay visible. The edited track is white with corners. When you touch or turn a knob, its value replaces the name under it. Delete + touch resets a parameter.
 
 A step can hold several notes (a chord). All notes of a step have the same VEL, GATE, PROB, OFF, REP and N LEN. The Pitch encoder changes the selected note. It skips notes that are already in the step. Layout 1 cannot add notes. To build a chord, use Layout 2 or 3.
 
@@ -58,12 +58,20 @@ Hold a pad for 0.4 seconds to see where the notes are. A long press changes noth
 - Layout 1 has no pitch grids. A long press there does nothing special, and a step press acts at once.
 
 ### Main screen
-Each track has an S LEN knob (the second encoder of its column). The knob sets the length of the sequence of the track. A pitch shows only while its note plays. A chord with a name shows the name big and its notes small below it. Examples are `Cmaj7` and `Amin/C`. Minor is "min" because the screen font has upper case only. A set of notes with no name shows the notes big. Text never goes over the S LEN knob. Notes that do not fit become `+N`. The edit view does the same for the selected step. Each track shows the last note played and a bar for its position in the loop. Track names and rates are at the bottom, above the Screen-bottom buttons. The selected track is a filled block.
+Each track has two knobs. The first encoder of its column is the MIDI knob: it sets the MIDI channel of the track (1 to 16). The second encoder is the S LEN knob: it sets the length of the sequence of the track. Touch a knob to see its value. Delete + touch resets the knob (channel 1, length 16). A pitch shows only while its note plays. A chord with a name shows the name big and its notes small below it. Examples are `Cmaj7` and `Amin/C`. Minor is "min" because the screen font has upper case only. A set of notes with no name shows the notes big. Text never goes over the S LEN knob. Notes that do not fit become `+N`. The edit view does the same for the selected step. Each track shows the last note played and a bar for its position in the loop. Track names and rates are at the bottom, above the Screen-bottom buttons. The selected track is a filled block.
 
 ### Colors
 Track colors use the hardware palette for the pads and measured screen colors for the screen
 (`colortable.py`). To tune them on a Push, use the `colorlab-py` example module in
 `push-tethered-app`. Copy its `colors.json` next to `run.py`. This module reads it at start up.
+
+### Lead and follow
+The module has two clock roles. Press the tempo encoder to change the role. The screen shows a popup (`CLOCK LEAD` or `CLOCK FOLLOW`), and the transport stops.
+
+- **Follow** (default): the module follows the MIDI clock that it receives. It measures the tempo of the sender. The status line shows it, for example `120 BPM EXT`, and note lengths follow it. The sender owns the tempo, so the tempo wheel does nothing.
+- **Lead**: the module sends MIDI clock (24 ticks per beat), Start, and Stop. It ignores the clock that it receives. The status line shows `120 BPM LEAD`. The tempo wheel changes the BPM, and the DAW follows. Play and Stop on the module start and stop the DAW.
+
+To make Ableton Live follow the module in Lead mode, turn on Sync for the MIDI input port of the module in the Link, Tempo and MIDI settings of Live. Then switch the clock of Live to EXT. I did not test this in Live. The clock comes from a thread, so a busy screen does not delay it. The timing is not the same as a hardware clock.
 
 ### Clock
 All tracks read one shared clock (24 ticks per quarter note, from the internal tempo or from

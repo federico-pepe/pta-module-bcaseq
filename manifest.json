@@ -1,7 +1,7 @@
 {
   "id": "bcaseq",
   "name": "BCA Sequencer",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Multi-layout MIDI step sequencer for Push (4x4 pad quadrants per track)",
   "author": "federico-pepe",
   "needs_midi_out": true,
