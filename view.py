@@ -156,12 +156,12 @@ def notes_text(notes, flats=False, width=None, scale=1):
     return "+%d" % len(names)
 
 
-def headline(x, baseline, notes, flats, width, c):
+def headline(x, baseline, notes, flats, width, c, max_scale=3):
     """(big text op, is_chord). Named chord: name is big, caller draws notes small. Else notes are big."""
     name = chords.chord_name(notes, flats)
     if name:
-        return _text(x, baseline, name, c, fit_scale(name, width)), True
-    scale = fit_scale(notes_text(notes, flats), width)
+        return _text(x, baseline, name, c, fit_scale(name, width, max_scale)), True
+    scale = fit_scale(notes_text(notes, flats), width, max_scale)
     return _text(x, baseline, notes_text(notes, flats, width, scale), c, scale), False
 
 
@@ -218,12 +218,12 @@ def _scale_ops(e, white):
     return ops
 
 
-# Edit-mode gauge knobs: encoder 1-7 -> short label. Encoder 0 is Pitch, drawn big.
-KNOB_LABELS = ["VEL", "GATE", "PROB", "OFF", "MIDI", "REP", "N LEN"]
+# Edit-mode gauge knobs: encoder 1-6 -> short label. Encoder 0 is Pitch, drawn big.
+KNOB_LABELS = ["VEL", "GATE", "PROB", "OFF", "REP", "N LEN"]
 KNOB_FIELD = {"VEL": "vel", "GATE": "gate", "PROB": "prob", "OFF": "offset",
-              "MIDI": "channel", "REP": "repeat", "N LEN": "len"}
+              "REP": "repeat", "N LEN": "len"}
 KNOB_RANGE = {"VEL": (1, 127), "GATE": (2, 99), "PROB": (0, 100), "OFF": (-45, 45),
-              "MIDI": (1, 16), "REP": (1, eng.MAX_REPEAT), "N LEN": (1, eng.STEPS)}
+              "REP": (1, eng.MAX_REPEAT), "N LEN": (1, eng.STEPS)}
 KNOB_R = 15
 KNOB_ROW_Y = (38, 92)
 DIVIDER = 124  # dgray palette index
@@ -231,13 +231,14 @@ DIVIDER_Y, DIVIDER_H = 22, 132
 
 # Main screen
 INFO_BASELINE = 16
-NOTE_BASELINE = 76
-MAIN_TEXT_W = 148          # note text stops left of the S LEN knob
+NOTE_BASELINE = 92         # note or chord text, below the two knobs of a track
+MAIN_TEXT_W = W // layouts.SCREEN_TRACKS - 16   # a whole column
+MAIN_MAX_SCALE = 2
 EDIT_TEXT_W = 96           # edit view: space left of the knobs
-CHORD_BASELINE_MAIN = 90   # chord notes under the chord name, above the loop bar
+CHORD_BASELINE_MAIN = 104  # chord notes under the chord name, above the loop bar
 CHORD_BASELINE_EDIT = 98   # chord notes under the PITCH label, left of the knobs
-MAIN_BAR_Y = 96
-SLEN_Y = 50   # centre of the S LEN knob
+MAIN_BAR_Y = 110
+SLEN_Y = 40   # centre of the MIDI and S LEN knobs
 STRIP_Y, STRIP_H = 132, 22   # track names, directly above the Screen-bottom buttons
 EDIT_BAR_Y = 138
 BAR_H = 6
@@ -253,8 +254,7 @@ def display_step(e, ti):
 
 
 def knob_value(t, s, label):
-    f = KNOB_FIELD[label]
-    return t[f] if f == "channel" else s[f]
+    return s[KNOB_FIELD[label]]
 
 
 def sounding_notes(t, now):
@@ -263,9 +263,9 @@ def sounding_notes(t, now):
     return t["_lit_notes"] if now < t["_show_until"] else []
 
 
-def fit_scale(text, width):
-    """Biggest text scale (3, 2, 1) that fits the width."""
-    for scale in (3, 2):
+def fit_scale(text, width, max_scale=3):
+    """Biggest text scale (max_scale down to 1) that fits the width."""
+    for scale in range(max_scale, 1, -1):
         if CHAR_W * scale * len(text) <= width:
             return scale
     return 1
@@ -295,6 +295,19 @@ def _dividers(col_w, n):
     return [_rect(i * col_w, DIVIDER_Y, 1, DIVIDER_H, color_by_index(DIVIDER)) for i in range(1, n)]
 
 
+def _main_knob(enc, c, val, rng, label, shown):
+    """A gauge over its encoder. The value replaces the label while it is touched."""
+    cx = enc * (W // 8) + (W // 16)
+    ops = _gauge(cx, SLEN_Y, c, val, rng[0], rng[1])
+    active = shown == enc
+    text = str(val) if active else label
+    tx = cx - CHAR_W * len(text) // 2
+    ops.append(_text(tx, SLEN_Y + KNOB_R + 13, text, c))
+    if active:
+        ops.append(_rect(tx, SLEN_Y + KNOB_R + 16, CHAR_W * len(text), 1, c))
+    return ops
+
+
 def _sequencer_ops(e):
     tracks = layouts.screen_tracks(e)
     n = layouts.SCREEN_TRACKS
@@ -316,20 +329,14 @@ def _sequencer_ops(e):
             c = track_color(t["color"])
             playing = sounding_notes(t, now)
             if playing:
-                big, is_chord = headline(x + 8, NOTE_BASELINE, playing, flats, MAIN_TEXT_W, c)
+                big, is_chord = headline(x + 8, NOTE_BASELINE, playing, flats, MAIN_TEXT_W, c, MAIN_MAX_SCALE)
                 ops.append(big)
                 if is_chord:
                     ops.append(_text(x + 8, CHORD_BASELINE_MAIN,
                                      notes_text(playing, flats, col_w - 16), c))
             enc = layouts.slen_encoder(e, slot)
-            cx = enc * (W // 8) + (W // 16)
-            ops += _gauge(cx, SLEN_Y, c, t["length"], 1, eng.STEPS)
-            active = shown == enc
-            text = str(t["length"]) if active else "S LEN"
-            tx = cx - CHAR_W * len(text) // 2
-            ops.append(_text(tx, SLEN_Y + KNOB_R + 13, text, c))
-            if active:
-                ops.append(_rect(tx, SLEN_Y + KNOB_R + 16, CHAR_W * len(text), 1, c))
+            ops += _main_knob(enc - 1, c, t["channel"], eng.CHANNEL_RANGE, "MIDI", shown)
+            ops += _main_knob(enc, c, t["length"], (1, eng.STEPS), "S LEN", shown)
             ops += _bar(x + 8, MAIN_BAR_Y, col_w - 24, c, t["_progress"])
             ops += _strip_cell(e, ti, x, col_w)
         return ops
@@ -413,7 +420,13 @@ def _status_line(e):
     p = e.pattern
     key = ("%s %s" % (chords.pitch_class_name(p["root"], p["flats"]), scale_label(p["scale"]))
            if p["scope_global"] else "Key per track")
-    return "%d BPM   %s   %s" % (p["bpm"], key, "In Key" if p["in_key"] else "Chromatic")
+    if e.lead:
+        bpm = "%d BPM LEAD" % p["bpm"]
+    elif e.is_externally_synced() and e.ext_bpm is not None:
+        bpm = "%d BPM EXT" % round(e.bpm())
+    else:
+        bpm = "%d BPM" % p["bpm"]
+    return "%s   %s   %s" % (bpm, key, "In Key" if p["in_key"] else "Chromatic")
 
 
 def _browser_ops(state, black, white):

@@ -104,9 +104,9 @@ class EditTest(unittest.TestCase):
         layouts.pad_press(e, 0, 7)
         e.nudge(1, 5)                      # velocity not throttled
         self.assertEqual(e.tracks[0]["steps"][0]["vel"], 105)
-        e.nudge(6, 3)                      # repeat throttled: no change yet
+        e.nudge(5, 3)                      # repeat throttled: no change yet
         self.assertEqual(e.tracks[0]["steps"][0]["repeat"], 1)
-        e.nudge(6, 1)
+        e.nudge(5, 1)
         self.assertEqual(e.tracks[0]["steps"][0]["repeat"], 2)
         e.nudge(1, 500)
         self.assertEqual(e.tracks[0]["steps"][0]["vel"], 127)
@@ -626,7 +626,7 @@ class NoteLengthTest(unittest.TestCase):
     def test_note_length_holds_the_note(self):
         e, notes = make()
         layouts.pad_press(e, 0, 7)                    # step 0 on and selected
-        e.nudge(7, 8)                                 # N LEN +2 (friction 4)
+        e.nudge(6, 8)                                 # N LEN +2 (friction 4)
         self.assertEqual(e.tracks[0]["steps"][0]["len"], 3)
         self.assertEqual(e.tracks[0]["length"], 16)   # the sequence length is not touched
         e.start()
@@ -649,11 +649,11 @@ class NoteLengthTest(unittest.TestCase):
     def test_reset_and_persist(self):
         e, _ = make()
         layouts.pad_press(e, 0, 7)
-        e.nudge(7, 12)
+        e.nudge(6, 12)
         e2, _ = make()
         self.assertTrue(e2.load(e.to_doc()))
         self.assertEqual(e2.tracks[0]["steps"][0]["len"], 4)
-        e.reset_param(7)
+        e.reset_param(6)
         self.assertEqual(e.tracks[0]["steps"][0]["len"], 1)
 
     def test_old_file_without_len_loads(self):
@@ -698,7 +698,7 @@ class SequenceLengthKnobTest(unittest.TestCase):
         st.popup_title = st.popup_body = None
         st.popup_until = 0
         ops = view.draw(st)["ops"]
-        self.assertEqual(sum(1 for o in ops if o["kind"] == "knobarc"), 4)
+        self.assertEqual(sum(1 for o in ops if o["kind"] == "knobarc"), 8)
         texts = [o["params"]["s"] for o in ops if o["kind"] == "text"]
         self.assertEqual(texts.count("S LEN"), 4)
         layouts.pad_press(st.engine, 0, 7)
@@ -720,7 +720,7 @@ class PitchDisplayTest(unittest.TestCase):
 
     def big_notes(self):
         return [o["params"]["s"] for o in view.draw(self.st)["ops"]
-                if o["kind"] == "text" and o["params"].get("scale") == 3]
+                if o["kind"] == "text" and o["params"].get("scale") in (2, 3)]
 
     def test_main_shows_no_pitch_until_a_note_plays(self):
         import time as _t
@@ -780,7 +780,7 @@ class ChordDisplayTest(unittest.TestCase):
         t = self.e.tracks[0]
         t["_lit_notes"], t["_show_until"] = [60, 64, 67], _t.monotonic() + 5
         self.assertIn("C3 E3 G3", [s for s, _ in self.texts()])
-        self.assertIn(("C", 3), self.texts())
+        self.assertIn(("C", 2), self.texts())
 
     def test_edit_view_unnamed_step_shows_selected_note_big(self):
         layouts.pad_press(self.e, 0, 7)
@@ -815,10 +815,10 @@ class ChordDisplayTest(unittest.TestCase):
         t = self.e.tracks[0]
         t["_lit_notes"], t["_show_until"] = [60, 64, 67, 71], _t.monotonic() + 5
         texts = self.texts()
-        self.assertIn(("Cmaj7", 3), texts)
+        self.assertIn(("Cmaj7", 2), texts)
         self.assertIn(("C3 E3 G3 B3", None), texts)
 
-    def test_main_screen_text_stays_left_of_the_knob(self):
+    def test_main_screen_text_stays_inside_its_column(self):
         import time as _t
         t = self.e.tracks[0]
         t["_lit_notes"], t["_show_until"] = [60, 61, 62, 63, 64, 65], _t.monotonic() + 5    # no name
@@ -1461,6 +1461,252 @@ class HoldStepInputTest(unittest.TestCase):
         tap(e, *self.pitch_pad(64))
         self.assertEqual(e.armed, {64})
         self.assertFalse(self.steps(0, 0)["on"])
+
+
+class ExternalTempoTest(unittest.TestCase):
+    def setUp(self):
+        self.sent = []
+        self.e = eng.Engine(lambda ch, n, v: None, lambda ch, n: None,
+                            send_transport=self.sent.append)
+        self.base = __import__("time").monotonic()
+
+    def ticks(self, n, bpm, start=0):
+        dt = 60.0 / (bpm * 24)
+        for i in range(n):
+            self.e.on_external_clock_byte(0xF8, now=self.base + (start + i) * dt)
+        return self.base + (start + n - 1) * dt
+
+    def test_tempo_is_measured_from_the_clock(self):
+        self.ticks(60, 90)
+        self.assertAlmostEqual(self.e.bpm(), 90, delta=0.5)
+        self.assertAlmostEqual(self.e.step_duration(self.e.tracks[0]), 60 / 90 * 0.25, delta=0.002)
+
+    def test_tempo_follows_a_change_of_the_sender(self):
+        last = self.ticks(60, 120)
+        dt = 60.0 / (150 * 24)
+        for i in range(60):
+            self.e.on_external_clock_byte(0xF8, now=last + (i + 1) * dt)
+        self.assertAlmostEqual(self.e.bpm(), 150, delta=0.5)
+
+    def test_internal_bpm_is_used_without_a_clock(self):
+        self.assertEqual(self.e.bpm(), self.e.pattern["bpm"])
+        self.ticks(60, 90)
+        self.e.last_ext_clock -= 10                     # the clock stopped long ago
+        self.assertEqual(self.e.bpm(), self.e.pattern["bpm"])
+
+    def test_nonsense_intervals_do_not_set_the_tempo(self):
+        for _ in range(40):
+            self.e.on_external_clock_byte(0xF8, now=self.base)     # all at the same time
+        self.assertEqual(self.e.bpm(), self.e.pattern["bpm"])
+
+    def test_a_gap_starts_a_new_measurement(self):
+        self.ticks(60, 90)
+        self.ticks(60, 150, start=60 + 200)             # long pause, then 150 BPM
+        self.assertAlmostEqual(self.e.bpm(), 150, delta=0.5)
+
+    def test_wheel_changes_the_internal_bpm_without_a_clock(self):
+        self.e.nudge_tempo(5)
+        self.assertEqual(self.e.pattern["bpm"], eng.DEFAULT_BPM + 5)
+        self.e.nudge_tempo(-1000)
+        self.assertEqual(self.e.pattern["bpm"], eng.MIN_BPM)
+        self.assertEqual(self.sent, [])
+
+    def test_status_line_marks_the_external_clock(self):
+        self.assertNotIn("EXT", view._status_line(self.e))
+        self.ticks(60, 100)
+        self.e.last_ext_clock = __import__("time").monotonic()
+        line = view._status_line(self.e)
+        self.assertIn("EXT", line)
+        self.assertIn("100 BPM", line)
+
+class MidiChannelKnobTest(unittest.TestCase):
+    def test_edit_encoders_no_longer_have_a_channel(self):
+        self.assertNotIn("channel", eng.PARAMS)
+        self.assertEqual(len(eng.PARAMS), 7)
+
+    def test_first_encoder_of_each_track_is_its_channel_knob(self):
+        e, _ = make()
+        self.assertEqual([layouts.channel_track(e, i) for i in range(8)],
+                         [0, None, 1, None, 2, None, 3, None])
+        for layout in (1, 2):
+            layouts.switch_layout(e, layout)
+            self.assertEqual([layouts.channel_track(e, i) for i in range(8)],
+                             [0, None, 1, None, 2, None, 3, None])
+
+    def test_knob_changes_the_channel_with_friction_and_clamp(self):
+        e, _ = make()
+        e.nudge_channel(1, 3, 2)                       # friction 4: not yet
+        self.assertEqual(e.tracks[1]["channel"], 1)
+        e.nudge_channel(1, 1, 2)
+        self.assertEqual(e.tracks[1]["channel"], 2)
+        e.nudge_channel(1, 4000, 2)
+        self.assertEqual(e.tracks[1]["channel"], 16)
+        e.nudge_channel(1, -4000, 2)
+        self.assertEqual(e.tracks[1]["channel"], 1)
+        self.assertEqual(e.active_param[0], 2)
+        self.assertEqual(e.tracks[0]["channel"], 1)
+
+    def test_reset(self):
+        e, _ = make()
+        e.tracks[2]["channel"] = 9
+        e.reset_channel(2, 4)
+        self.assertEqual(e.tracks[2]["channel"], 1)
+
+    def test_run_routes_turn_and_touch_and_selects_the_track(self):
+        import run
+        class S:
+            pass
+        st = S()
+        st.engine, st.browser_active = make()[0], False
+        e = st.engine
+        run.handle_encoder(st, {"name": "Encoder 5 turn", "index": 4, "delta": 8})
+        self.assertEqual(e.tracks[2]["channel"], 3)
+        self.assertEqual(e.rate_track, 2)
+        e.delete = True
+        run.handle_touch(st, {"name": "Encoder 5 touch", "touched": True})
+        self.assertEqual(e.tracks[2]["channel"], 1)
+        e.delete = False
+        run.handle_encoder(st, {"name": "Encoder 6 turn", "index": 5, "delta": -8})   # S LEN still works
+        self.assertEqual(e.tracks[2]["length"], 14)
+
+    def test_channel_still_plays_on_the_track_channel(self):
+        e, notes = make()
+        e.tracks[0]["channel"] = 5
+        tap_layout1 = layouts.pad_press
+        tap_layout1(e, 0, 7)
+        e.start()
+        e.tick(e.play_start + 0.001)
+        self.assertEqual(notes[0][1], 5)
+
+    def test_main_view_shows_a_midi_knob_per_track_and_edit_view_has_none(self):
+        class S:
+            pass
+        st = S()
+        st.engine, _ = make()
+        st.button_held, st.browser_active, st.browser_names, st.browser_cursor = {}, False, [], 0
+        st.popup_title = st.popup_body = None
+        st.popup_until = 0
+        e = st.engine
+        e.tracks[1]["channel"] = 7
+        texts = [o["params"]["s"] for o in view.draw(st)["ops"] if o["kind"] == "text"]
+        self.assertEqual(texts.count("MIDI"), 4)
+        self.assertEqual(texts.count("S LEN"), 4)
+        e.touch_param(2)                               # second track's channel knob
+        texts = [o["params"]["s"] for o in view.draw(st)["ops"] if o["kind"] == "text"]
+        self.assertEqual(texts.count("MIDI"), 3)
+        self.assertIn("7", texts)
+        layouts.pad_press(e, 0, 7)                     # edit view
+        e.active_param = None
+        ops = view.draw(st)["ops"]
+        texts = [o["params"]["s"] for o in ops if o["kind"] == "text"]
+        self.assertNotIn("MIDI", texts)
+        self.assertEqual(sum(1 for o in ops if o["kind"] == "knobarc"), 6 * 4)   # 6 knobs on each of 4 tracks
+
+
+class LeadClockTest(unittest.TestCase):
+    """Tempo encoder press: lead the DAW (send clock) or follow its clock."""
+
+    def setUp(self):
+        self.sent = []
+        self.e = eng.Engine(lambda ch, n, v: None, lambda ch, n: None, send_transport=self.sent.append)
+        self.now = __import__("time").monotonic()
+
+    def follow_a_clock(self, bpm=100, n=60):
+        dt = 60.0 / (bpm * 24)
+        for i in range(n):
+            self.e.on_external_clock_byte(0xF8, now=self.now + i * dt)
+        self.e.last_ext_clock = __import__("time").monotonic()
+
+    def test_default_is_follow(self):
+        self.assertFalse(self.e.lead)
+
+    def test_toggle_flips_the_role_and_stops_the_transport(self):
+        self.e.start()
+        self.assertTrue(self.e.toggle_lead())
+        self.assertTrue(self.e.lead)
+        self.assertFalse(self.e.playing)
+        self.assertFalse(self.e.toggle_lead())
+        self.assertFalse(self.e.lead)
+
+    def test_play_and_stop_send_transport_only_when_leading(self):
+        self.e.start()
+        self.e.stop()
+        self.assertEqual(self.sent, [])
+        self.e.toggle_lead()
+        self.e.toggle_play()
+        self.e.toggle_play()
+        self.assertEqual(self.sent, ["start", "stop"])
+
+    def test_stop_without_playing_sends_nothing(self):
+        self.e.toggle_lead()
+        self.e.stop()
+        self.assertEqual(self.sent, [])
+
+    def test_incoming_clock_and_transport_are_ignored_when_leading(self):
+        self.e.toggle_lead()
+        self.follow_a_clock()
+        self.e.on_external_clock_byte(0xFA)
+        self.assertFalse(self.e.playing)
+        self.assertFalse(self.e.is_externally_synced())
+        self.assertEqual(self.e.bpm(), self.e.pattern["bpm"])
+
+    def test_wheel_sets_the_bpm_when_leading(self):
+        self.follow_a_clock()
+        self.e.toggle_lead()
+        self.e.nudge_tempo(5)
+        self.assertEqual(self.e.pattern["bpm"], eng.DEFAULT_BPM + 5)
+
+    def test_wheel_does_nothing_while_following_a_clock(self):
+        self.follow_a_clock()
+        before = self.e.pattern["bpm"]
+        self.e.nudge_tempo(5)
+        self.assertEqual(self.e.pattern["bpm"], before)
+        self.assertEqual(self.sent, [])
+
+    def test_going_back_to_follow_measures_again(self):
+        self.follow_a_clock(100)
+        self.e.toggle_lead()
+        self.e.toggle_lead()
+        self.assertIsNone(self.e.ext_bpm)
+
+    def test_status_line_says_lead(self):
+        self.e.toggle_lead()
+        self.assertIn("LEAD", view._status_line(self.e))
+        self.assertNotIn("EXT", view._status_line(self.e))
+
+    def test_run_press_toggles_and_the_wheel_shows_the_tempo(self):
+        import run
+        class S:
+            def __init__(self, e):
+                self.engine, self.browser_active, self.popup = e, False, None
+                self.button_held = {}
+
+            def show_popup(self, title, body=None):
+                self.popup = (title, body)
+        st = S(self.e)
+        run.handle_button(st, {"name": "Tempo encoder press", "pressed": True})
+        self.assertTrue(self.e.lead)
+        self.assertEqual(st.popup, ("CLOCK", "LEAD"))
+        run.handle_button(st, {"name": "Tempo encoder press", "pressed": False})
+        self.assertTrue(self.e.lead)                              # a release does nothing
+        run.handle_encoder(st, {"name": "Tempo wheel turn", "delta": 3})
+        self.assertEqual(st.popup, ("TEMPO", str(eng.DEFAULT_BPM + 3)))
+        run.handle_button(st, {"name": "Tempo encoder press", "pressed": True})
+        self.assertEqual(st.popup, ("CLOCK", "FOLLOW"))
+        self.follow_a_clock(100)
+        run.handle_encoder(st, {"name": "Tempo wheel turn", "delta": 3})
+        self.assertEqual(st.popup[0], "TEMPO")
+        self.assertIn("EXT", st.popup[1])
+
+    def test_state_sends_transport_to_the_host(self):
+        import run
+        st = run.State()
+        sent = []
+        st.request = lambda method, params: sent.append(method)
+        st.engine.toggle_lead()
+        st.engine.start()
+        st.engine.stop()
+        self.assertEqual(sent, ["send_start", "send_stop"])
 
 
 class DefaultsAndButtonsTest(unittest.TestCase):

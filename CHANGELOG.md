@@ -7,6 +7,16 @@ between minor versions).
 
 ## [Unreleased]
 
+### Added
+
+- External clock: the module measures the tempo of the sender. The status line shows it with `EXT`, and note lengths follow it.
+- Lead mode: press the tempo encoder to send MIDI clock, Start and Stop (`clockout.py`) and ignore the incoming clock. The tempo wheel then sets the BPM and the DAW follows. Press again to follow a clock.
+
+### Changed
+
+- The MIDI channel of a track moves from the edit view to the main screen: the first encoder of each track column. The edit view has 7 encoders now (Pitch, VEL, GATE, PROB, OFF, REP, N LEN).
+- Main screen: each track shows two knobs (MIDI and S LEN). The note and chord text moved below the knobs, with a maximum size of 2.
+
 ## [0.3.0] - 2026-10-09
 
 ### Added
