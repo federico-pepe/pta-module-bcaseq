@@ -420,12 +420,7 @@ def _status_line(e):
     p = e.pattern
     key = ("%s %s" % (chords.pitch_class_name(p["root"], p["flats"]), scale_label(p["scale"]))
            if p["scope_global"] else "Key per track")
-    if e.lead:
-        bpm = "%d BPM LEAD" % p["bpm"]
-    elif e.is_externally_synced() and e.ext_bpm is not None:
-        bpm = "%d BPM EXT" % round(e.bpm())
-    else:
-        bpm = "%d BPM" % p["bpm"]
+    bpm = "%d BPM LEAD" % p["bpm"] if e.lead else "%d BPM" % p["bpm"]
     return "%s   %s   %s" % (bpm, key, "In Key" if p["in_key"] else "Chromatic")
 
 

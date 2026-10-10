@@ -1463,62 +1463,6 @@ class HoldStepInputTest(unittest.TestCase):
         self.assertFalse(self.steps(0, 0)["on"])
 
 
-class ExternalTempoTest(unittest.TestCase):
-    def setUp(self):
-        self.sent = []
-        self.e = eng.Engine(lambda ch, n, v: None, lambda ch, n: None,
-                            send_transport=self.sent.append)
-        self.base = __import__("time").monotonic()
-
-    def ticks(self, n, bpm, start=0):
-        dt = 60.0 / (bpm * 24)
-        for i in range(n):
-            self.e.on_external_clock_byte(0xF8, now=self.base + (start + i) * dt)
-        return self.base + (start + n - 1) * dt
-
-    def test_tempo_is_measured_from_the_clock(self):
-        self.ticks(60, 90)
-        self.assertAlmostEqual(self.e.bpm(), 90, delta=0.5)
-        self.assertAlmostEqual(self.e.step_duration(self.e.tracks[0]), 60 / 90 * 0.25, delta=0.002)
-
-    def test_tempo_follows_a_change_of_the_sender(self):
-        last = self.ticks(60, 120)
-        dt = 60.0 / (150 * 24)
-        for i in range(60):
-            self.e.on_external_clock_byte(0xF8, now=last + (i + 1) * dt)
-        self.assertAlmostEqual(self.e.bpm(), 150, delta=0.5)
-
-    def test_internal_bpm_is_used_without_a_clock(self):
-        self.assertEqual(self.e.bpm(), self.e.pattern["bpm"])
-        self.ticks(60, 90)
-        self.e.last_ext_clock -= 10                     # the clock stopped long ago
-        self.assertEqual(self.e.bpm(), self.e.pattern["bpm"])
-
-    def test_nonsense_intervals_do_not_set_the_tempo(self):
-        for _ in range(40):
-            self.e.on_external_clock_byte(0xF8, now=self.base)     # all at the same time
-        self.assertEqual(self.e.bpm(), self.e.pattern["bpm"])
-
-    def test_a_gap_starts_a_new_measurement(self):
-        self.ticks(60, 90)
-        self.ticks(60, 150, start=60 + 200)             # long pause, then 150 BPM
-        self.assertAlmostEqual(self.e.bpm(), 150, delta=0.5)
-
-    def test_wheel_changes_the_internal_bpm_without_a_clock(self):
-        self.e.nudge_tempo(5)
-        self.assertEqual(self.e.pattern["bpm"], eng.DEFAULT_BPM + 5)
-        self.e.nudge_tempo(-1000)
-        self.assertEqual(self.e.pattern["bpm"], eng.MIN_BPM)
-        self.assertEqual(self.sent, [])
-
-    def test_status_line_marks_the_external_clock(self):
-        self.assertNotIn("EXT", view._status_line(self.e))
-        self.ticks(60, 100)
-        self.e.last_ext_clock = __import__("time").monotonic()
-        line = view._status_line(self.e)
-        self.assertIn("EXT", line)
-        self.assertIn("100 BPM", line)
-
 class MidiChannelKnobTest(unittest.TestCase):
     def test_edit_encoders_no_longer_have_a_channel(self):
         self.assertNotIn("channel", eng.PARAMS)
@@ -1648,7 +1592,21 @@ class LeadClockTest(unittest.TestCase):
         self.e.on_external_clock_byte(0xFA)
         self.assertFalse(self.e.playing)
         self.assertFalse(self.e.is_externally_synced())
-        self.assertEqual(self.e.bpm(), self.e.pattern["bpm"])
+
+    def test_step_length_does_not_depend_on_clock_jitter(self):
+        import random
+        before = self.e.step_duration(self.e.tracks[0])
+        dt = 60.0 / (100 * 24)
+        t = self.now
+        for _ in range(100):
+            t += dt * random.uniform(0.6, 1.4)           # a jittery clock
+            self.e.on_external_clock_byte(0xF8, now=t)
+            self.assertEqual(self.e.step_duration(self.e.tracks[0]), before)
+
+    def test_wheel_does_nothing_while_following_a_clock(self):
+        self.follow_a_clock()
+        self.e.nudge_tempo(5)
+        self.assertEqual(self.e.pattern["bpm"], eng.DEFAULT_BPM)
 
     def test_wheel_sets_the_bpm_when_leading(self):
         self.follow_a_clock()
@@ -1656,30 +1614,18 @@ class LeadClockTest(unittest.TestCase):
         self.e.nudge_tempo(5)
         self.assertEqual(self.e.pattern["bpm"], eng.DEFAULT_BPM + 5)
 
-    def test_wheel_does_nothing_while_following_a_clock(self):
-        self.follow_a_clock()
-        before = self.e.pattern["bpm"]
-        self.e.nudge_tempo(5)
-        self.assertEqual(self.e.pattern["bpm"], before)
-        self.assertEqual(self.sent, [])
-
-    def test_going_back_to_follow_measures_again(self):
-        self.follow_a_clock(100)
-        self.e.toggle_lead()
-        self.e.toggle_lead()
-        self.assertIsNone(self.e.ext_bpm)
-
     def test_status_line_says_lead(self):
         self.e.toggle_lead()
         self.assertIn("LEAD", view._status_line(self.e))
-        self.assertNotIn("EXT", view._status_line(self.e))
+        self.e.toggle_lead()
+        self.assertNotIn("LEAD", view._status_line(self.e))
 
     def test_run_press_toggles_and_the_wheel_shows_the_tempo(self):
         import run
         class S:
             def __init__(self, e):
                 self.engine, self.browser_active, self.popup = e, False, None
-                self.button_held = {}
+                self.button_held, self.clock_out = {}, None
 
             def show_popup(self, title, body=None):
                 self.popup = (title, body)
@@ -1694,9 +1640,10 @@ class LeadClockTest(unittest.TestCase):
         run.handle_button(st, {"name": "Tempo encoder press", "pressed": True})
         self.assertEqual(st.popup, ("CLOCK", "FOLLOW"))
         self.follow_a_clock(100)
+        st.popup = None
         run.handle_encoder(st, {"name": "Tempo wheel turn", "delta": 3})
-        self.assertEqual(st.popup[0], "TEMPO")
-        self.assertIn("EXT", st.popup[1])
+        self.assertIsNone(st.popup)                                          # following a clock: no popup
+        self.assertEqual(self.e.pattern["bpm"], eng.DEFAULT_BPM + 3)         # the wheel does nothing
 
     def test_state_sends_transport_to_the_host(self):
         import run

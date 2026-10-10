@@ -98,7 +98,7 @@ Turn the **tempo wheel** to change the BPM. Press the **Play** button to start a
 
 The sequencer can follow a clock or lead it. Press the **tempo encoder** to change the role. The screen shows "CLOCK LEAD" or "CLOCK FOLLOW".
 
-- **Follow** (default): the sequencer follows the MIDI clock of your DAW. The screen shows the tempo of the DAW, for example "120 BPM EXT". The tempo wheel does not change it.
+- **Follow** (default): the sequencer follows the MIDI clock of your DAW. The clock sets the speed, so the tempo wheel does nothing while the clock arrives.
 - **Lead**: the sequencer sends the clock. The tempo wheel changes the BPM, and **Play** starts and stops the DAW. First set your DAW to follow an external clock.
 
 ## 9. Save and load

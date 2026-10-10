@@ -50,6 +50,41 @@ class ClockOutTest(unittest.TestCase):
         c.join(1.0)
         self.assertGreater(len(ticks) - n1, n1 * 1.4)
 
+    def test_does_not_spin_after_a_rephase_while_following(self):
+        """The tempo encoder press calls rephase(). While following, that must not make the thread busy-loop."""
+        e = FakeEngine(lead=False)
+        waits = []
+        c = clockout.ClockOut(e, lambda: None)
+        real_wait = c._rephase.wait
+        c._rephase.wait = lambda t=None: (waits.append(1), real_wait(t))[1]
+        c.start()
+        time.sleep(0.1)
+        c.rephase()
+        c.rephase()
+        time.sleep(0.6)
+        c.stop()
+        c.join(1.0)
+        self.assertLess(len(waits), 20)
+
+    def test_back_to_follow_after_leading_does_not_spin(self):
+        e = FakeEngine(lead=True)
+        ticks = []
+        c = clockout.ClockOut(e, lambda: ticks.append(1))
+        c.start()
+        time.sleep(0.1)
+        e.lead = False
+        c.rephase()                                     # what the press does
+        time.sleep(0.1)
+        n = len(ticks)
+        waits = []
+        real_wait = c._rephase.wait
+        c._rephase.wait = lambda t=None: (waits.append(1), real_wait(t))[1]
+        time.sleep(0.6)
+        c.stop()
+        c.join(1.0)
+        self.assertLess(len(waits), 20)
+        self.assertLessEqual(len(ticks) - n, 1)         # no ticks while following
+
     def test_stops_when_asked(self):
         e = FakeEngine()
         c = clockout.ClockOut(e, lambda: None)
