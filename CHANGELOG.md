@@ -7,8 +7,11 @@ between minor versions).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-10
+
 ### Added
 
+- `MANUAL.md`: a short user guide. The release tarball includes it.
 - External clock: the module measures the tempo of the sender. The status line shows it with `EXT`, and note lengths follow it.
 - Lead mode: press the tempo encoder to send MIDI clock, Start and Stop (`clockout.py`) and ignore the incoming clock. The tempo wheel then sets the BPM and the DAW follows. Press again to follow a clock.
 
